@@ -11,15 +11,59 @@ from . import agents
 # Register Gym environments.
 ##
 
-
+# Spot velocity navigation environments - built on Isaac's Spot configs
 gym.register(
-    id="Template-Quadruped-v0",
+    id="Spot-Velocity-Flat-Nav-v0",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
-        "env_cfg_entry_point": f"{__name__}.quadruped_env_cfg:QuadrupedEnvCfg",
-        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:PPORunnerCfg",
-        "skrl_amp_cfg_entry_point": f"{agents.__name__}:skrl_amp_cfg.yaml",
-        "skrl_cfg_entry_point": f"{agents.__name__}:skrl_ppo_cfg.yaml",
+        "env_cfg_entry_point": f"{__name__}.quadruped_env_cfg:SpotVelocityFlatNavEnvCfg",
+    },
+)
+
+gym.register(
+    id="Spot-Velocity-Rough-Quadruped-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.quadruped_env_cfg:SpotVelocityFlatNavEnvCfg",  # Same as flat for now
+    },
+)
+
+# Spot obstacle navigation environments - with cuboid obstacles
+gym.register(
+    id="Spot-Velocity-Flat-Obstacle-Quadruped-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.quadruped_env_cfg:SpotVelocityFlatObstacleNavEnvCfg",
+    },
+)
+
+gym.register(
+    id="Spot-Velocity-Rough-Obstacle-Quadruped-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.quadruped_env_cfg:SpotVelocityRoughObstacleNavEnvCfg",
+    },
+)
+
+# Play versions for testing (with fewer environments and longer episodes)
+gym.register(
+    id="Spot-Velocity-Flat-Obstacle-Quadruped-Play-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.quadruped_env_cfg:SpotVelocityFlatObstacleNavEnvCfg_PLAY",
+    },
+)
+
+gym.register(
+    id="Spot-Velocity-Rough-Obstacle-Quadruped-Play-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.quadruped_env_cfg:SpotVelocityRoughObstacleNavEnvCfg_PLAY",
     },
 )
