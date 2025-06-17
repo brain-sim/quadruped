@@ -102,7 +102,7 @@ class ExperimentArgs:
     measure_burnin: int = 3
 
     # Agent config
-    agent_type: str = "CNNPPOAgent"
+    agent_type: str = "MLPPPOAgent"
 
     checkpoint_interval: int = 10
     """environment steps between saving checkpoints."""
@@ -189,7 +189,7 @@ def make_isaaclab_env(
     )
     from isaaclab_tasks.utils.parse_cfg import parse_env_cfg
 
-    import cognitiverl.tasks  # noqa: F401
+    import quadruped.tasks  # noqa: F401
 
     def thunk():
         cfg = parse_env_cfg(
@@ -266,7 +266,7 @@ def main(args):
         use_torch=True,
         torch_deterministic=True,
     )
-    n_obs = int(np.prod(envs.observation_space.shape[1:]))
+    n_obs = int(np.prod(envs.observation_space["policy"].shape[1:]))
     n_act = int(np.prod(envs.action_space.shape[1:]))
     assert isinstance(envs.action_space, gym.spaces.Box), (
         "only continuous action space is supported"
@@ -279,7 +279,9 @@ def main(args):
     optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
 
     # ALGO Logic: Storage setup
-    obs = torch.zeros((args.num_steps,) + envs.observation_space.shape).to(device)
+    obs = torch.zeros((args.num_steps,) + envs.observation_space["policy"].shape).to(
+        device
+    )
     actions = torch.zeros((args.num_steps,) + envs.action_space.shape).to(device)
     logprobs = torch.zeros((args.num_steps, args.num_envs)).to(device)
     rewards = torch.zeros((args.num_steps, args.num_envs)).to(device)
@@ -380,7 +382,7 @@ def main(args):
             returns = advantages + values
 
         # flatten the batch
-        b_obs = obs.reshape((-1,) + envs.observation_space.shape[1:])
+        b_obs = obs.reshape((-1,) + envs.observation_space["policy"].shape[1:])
         b_logprobs = logprobs.reshape(-1)
         b_actions = actions.reshape((-1,) + envs.action_space.shape[1:])
         b_advantages = advantages.reshape(-1)

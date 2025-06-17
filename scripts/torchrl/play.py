@@ -111,7 +111,7 @@ def make_isaaclab_env(
     )
     from isaaclab_tasks.utils.parse_cfg import parse_env_cfg
 
-    import cognitiverl.tasks  # noqa: F401
+    import quadruped.tasks  # noqa: F401
 
     def thunk():
         cfg = parse_env_cfg(

@@ -13,11 +13,11 @@ from . import agents
 
 # Spot velocity navigation environments - built on Isaac's Spot configs
 gym.register(
-    id="Spot-Velocity-Flat-Nav-v0",
+    id="Spot-Velocity-Flat-Quadruped-v0",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
-        "env_cfg_entry_point": f"{__name__}.quadruped_env_cfg:SpotVelocityFlatNavEnvCfg",
+        "env_cfg_entry_point": f"{__name__}.quadruped_env_cfg:SpotVelocityFlatEnvCfg",
     },
 )
 
@@ -26,7 +26,7 @@ gym.register(
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
-        "env_cfg_entry_point": f"{__name__}.quadruped_env_cfg:SpotVelocityFlatNavEnvCfg",  # Same as flat for now
+        "env_cfg_entry_point": f"{__name__}.quadruped_env_cfg:SpotVelocityRoughEnvCfg",  # Same as flat for now
     },
 )
 
@@ -36,7 +36,7 @@ gym.register(
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
-        "env_cfg_entry_point": f"{__name__}.quadruped_env_cfg:SpotVelocityFlatObstacleNavEnvCfg",
+        "env_cfg_entry_point": f"{__name__}.quadruped_env_cfg:SpotVelocityFlatObstacleEnvCfg",
     },
 )
 
@@ -45,7 +45,7 @@ gym.register(
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
-        "env_cfg_entry_point": f"{__name__}.quadruped_env_cfg:SpotVelocityRoughObstacleNavEnvCfg",
+        "env_cfg_entry_point": f"{__name__}.quadruped_env_cfg:SpotVelocityRoughObstacleEnvCfg",
     },
 )
 
@@ -55,7 +55,7 @@ gym.register(
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
-        "env_cfg_entry_point": f"{__name__}.quadruped_env_cfg:SpotVelocityFlatObstacleNavEnvCfg_PLAY",
+        "env_cfg_entry_point": f"{__name__}.quadruped_env_cfg:SpotVelocityFlatObstacleEnvCfg_PLAY",
     },
 )
 
@@ -64,6 +64,6 @@ gym.register(
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
-        "env_cfg_entry_point": f"{__name__}.quadruped_env_cfg:SpotVelocityRoughObstacleNavEnvCfg_PLAY",
+        "env_cfg_entry_point": f"{__name__}.quadruped_env_cfg:SpotVelocityRoughObstacleEnvCfg_PLAY",
     },
 )

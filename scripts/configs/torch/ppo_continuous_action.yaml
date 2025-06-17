@@ -1,4 +1,4 @@
-task: Leatherback-Nav-v2
+task: Spot-Velocity-Flat-Obstacle-Quadruped-v0
 env_cfg_entry_point: env_cfg_entry_point
 num_envs: 64
 seed: 1
@@ -32,7 +32,7 @@ batch_size: 0
 minibatch_size: 0
 num_iterations: 0
 measure_burnin: 3
-agent_type: CNNPPOAgent
+agent_type: MLPPPOAgent
 checkpoint_interval: 1
 num_eval_envs: 3
 num_eval_env_steps: 200

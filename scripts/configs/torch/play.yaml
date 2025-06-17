@@ -1,4 +1,4 @@
-task: CognitiveRL-Nav-v2
+task: Spot-Velocity-Flat-Obstacle-Quadruped-v0
 env_cfg_entry_point: env_cfg_entry_point
 num_envs: 64
 seed: 1

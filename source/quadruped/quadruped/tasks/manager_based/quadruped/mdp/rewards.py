@@ -358,3 +358,132 @@ def multi_obstacle_clearance_reward(
     )
 
     return rewards
+
+
+def base_3d_velocity_tracking_reward(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg,
+    command_name: str = "base_velocity",
+    std_xy: float = 1.0,
+    std_z: float = 0.5,
+) -> torch.Tensor:
+    """Reward for tracking 3D velocity commands (x, y, z linear velocities).
+
+    This reward function tracks all three linear velocity components, giving
+    special attention to z-velocity (jumping) tracking.
+
+    Args:
+        env: The environment instance.
+        asset_cfg: Configuration for the robot asset.
+        command_name: Name of the velocity command.
+        std_xy: Standard deviation for xy velocity tracking.
+        std_z: Standard deviation for z velocity tracking.
+
+    Returns:
+        Reward tensor for 3D velocity tracking.
+    """
+    # Get robot and command data
+    robot: Articulation = env.scene[asset_cfg.name]
+    command = env.command_manager.get_command(command_name)
+
+    # Get current velocity (num_envs, 3)
+    current_vel = robot.data.root_lin_vel_b[:, :3]
+
+    # Get target velocity - check if it's 3D or 2D command
+    if command.shape[1] >= 4:  # 3D velocity command (x, y, z, yaw)
+        target_vel = command[:, :3]  # (num_envs, 3)
+    else:  # 2D velocity command (x, y, yaw)
+        # Extend 2D command to 3D by adding zero z-velocity
+        target_vel = torch.zeros(env.num_envs, 3, device=env.device)
+        target_vel[:, :2] = command[:, :2]  # Copy x, y
+        target_vel[:, 2] = 0.0  # No z-velocity command
+
+    # Calculate velocity errors
+    vel_error = current_vel - target_vel  # (num_envs, 3)
+
+    # Split into xy and z components
+    xy_error = vel_error[:, :2]  # (num_envs, 2)
+    z_error = vel_error[:, 2]  # (num_envs,)
+
+    # Calculate rewards with different weights for xy and z
+    xy_reward = torch.exp(-torch.sum(xy_error**2, dim=1) / (2 * std_xy**2))
+    z_reward = torch.exp(-(z_error**2) / (2 * std_z**2))
+
+    # Combine rewards (weighted average)
+    total_reward = 0.7 * xy_reward + 0.3 * z_reward
+
+    return total_reward
+
+
+def z_velocity_tracking_reward(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg,
+    command_name: str = "base_velocity",
+    std: float = 0.5,
+) -> torch.Tensor:
+    """Specific reward for tracking z-velocity (jumping) commands.
+
+    Args:
+        env: The environment instance.
+        asset_cfg: Configuration for the robot asset.
+        command_name: Name of the velocity command.
+        std: Standard deviation for z velocity tracking.
+
+    Returns:
+        Reward tensor for z-velocity tracking.
+    """
+    # Get robot and command data
+    robot: Articulation = env.scene[asset_cfg.name]
+    command = env.command_manager.get_command(command_name)
+
+    # Get current z-velocity
+    current_z_vel = robot.data.root_lin_vel_b[:, 2]  # (num_envs,)
+
+    # Get target z-velocity
+    if command.shape[1] >= 4:  # 3D velocity command
+        target_z_vel = command[:, 2]  # (num_envs,)
+    else:  # 2D velocity command - no z-velocity
+        target_z_vel = torch.zeros(env.num_envs, device=env.device)
+
+    # Calculate z-velocity error
+    z_error = current_z_vel - target_z_vel  # (num_envs,)
+
+    # Calculate reward using exponential decay
+    z_reward = torch.exp(-(z_error**2) / (2 * std**2))
+
+    return z_reward
+
+
+def jumping_effort_penalty(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg,
+    weight: float = 0.01,
+) -> torch.Tensor:
+    """Penalty for excessive jumping effort to encourage efficient jumping.
+
+    Args:
+        env: The environment instance.
+        asset_cfg: Configuration for the robot asset.
+        weight: Weight for the penalty.
+
+    Returns:
+        Penalty tensor for excessive jumping effort.
+    """
+    # Get robot
+    robot: Articulation = env.scene[asset_cfg.name]
+
+    # Get current z-velocity and acceleration
+    current_z_vel = robot.data.root_lin_vel_b[:, 2]  # (num_envs,)
+
+    # Calculate z-acceleration (rough approximation)
+    if hasattr(env, "_prev_z_vel"):
+        z_acceleration = (current_z_vel - env._prev_z_vel) / env.step_dt
+        env._prev_z_vel = current_z_vel.clone()
+    else:
+        z_acceleration = torch.zeros_like(current_z_vel)
+        env._prev_z_vel = current_z_vel.clone()
+
+    # Penalty for high z-acceleration (excessive jumping effort)
+    effort_penalty = weight * torch.abs(z_acceleration)
+
+    return -effort_penalty  # Return negative since it's a penalty
