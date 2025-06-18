@@ -29,6 +29,7 @@ class Uniform3DVelocityCommand(UniformVelocityCommand):
         Args:
             cfg: The configuration of the command generator.
             env: The environment.
+
         """
         # Initialize parent class
         super().__init__(cfg, env)

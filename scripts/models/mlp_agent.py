@@ -6,23 +6,27 @@ from .utils import layer_init
 
 
 class MLPPPOAgent(nn.Module):
-    def __init__(self, n_obs, n_act):
+    def __init__(self, n_obs, n_act, init_noise_std=0.1):
         super().__init__()
         self.critic = nn.Sequential(
-            layer_init(nn.Linear(n_obs, 64)),
+            layer_init(nn.Linear(n_obs, 256), std=0.01),
             nn.ELU(),
-            layer_init(nn.Linear(64, 64)),
+            layer_init(nn.Linear(256, 256), std=0.01),
             nn.ELU(),
-            layer_init(nn.Linear(64, 1), std=1.0),
+            layer_init(nn.Linear(256, 256), std=0.01),
+            nn.ELU(),
+            layer_init(nn.Linear(256, 1), std=1.0, bias_const=100.0),
         )
         self.actor_mean = nn.Sequential(
-            layer_init(nn.Linear(n_obs, 64)),
+            layer_init(nn.Linear(n_obs, 256), std=0.01),
             nn.ELU(),
-            layer_init(nn.Linear(64, 64)),
+            layer_init(nn.Linear(256, 256), std=0.01),
             nn.ELU(),
-            layer_init(nn.Linear(64, n_act), std=1.0),
+            layer_init(nn.Linear(256, 256), std=0.01),
+            nn.ELU(),
+            layer_init(nn.Linear(256, n_act), std=1.0),
         )
-        self.actor_logstd = nn.Parameter(torch.zeros(1, n_act))
+        self.actor_logstd = nn.Parameter(torch.log(init_noise_std * torch.ones(n_act)))
 
     def get_value(self, x):
         return self.critic(x)
