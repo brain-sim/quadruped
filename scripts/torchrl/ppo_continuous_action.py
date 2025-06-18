@@ -340,6 +340,7 @@ def main(args):
             # next_obs = next_obs_buf["policy"]
             # next_done = torch.logical_or(terminations, truncations).float()
             next_obs, reward, next_done, infos = envs.step(action)
+            print(next_obs[..., -1])
             if "episode" in infos:
                 for r in infos["episode"]["r"]:
                     max_ep_ret = max(max_ep_ret, r)

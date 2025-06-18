@@ -6,9 +6,15 @@
 
 # Import base Isaac Lab MDP functions
 import isaaclab.terrains as terrain_gen
+import isaaclab_tasks.manager_based.locomotion.velocity.mdp as mdp
 from isaaclab.envs.mdp import *  # noqa: F401, F403
+from isaaclab.managers import ObservationGroupCfg as ObsGroup
+from isaaclab.managers import ObservationTermCfg as ObsTerm
+from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
+from isaaclab.sensors import RayCasterCfg, patterns
 from isaaclab.utils import configclass
+from isaaclab.utils.noise import AdditiveUniformNoiseCfg as Unoise
 from isaaclab_tasks.manager_based.locomotion.velocity.config.spot.flat_env_cfg import (  # noqa: F401, F403
     SpotFlatEnvCfg,
     SpotRewardsCfg,
@@ -30,35 +36,108 @@ class SpotVelocityTerminationCfg(SpotTerminationsCfg):
 
 
 @configclass
-class SpotVelocityRewardsCfg(SpotRewardsCfg):
-    """Spot velocity tracking on flat terrain - minimal extension of Isaac's config."""
+class SpotObservationsCfg:
+    """Observation specifications for the MDP."""
 
-    # body_contact = RewardTermCfg(
-    #     func=body_contact_penalty,
-    #     weight=-1.0e-3,
-    #     params={
-    #         "sensor_cfg": SceneEntityCfg(
-    #             "contact_forces",
-    #             body_names=[".*leg"],
-    #         ),
-    #         "threshold": 1.0,
-    #     },
-    # )
+    @configclass
+    class PolicyCfg(ObsGroup):
+        """Observations for policy group."""
+
+        # `` observation terms (order preserved)
+        base_lin_vel = ObsTerm(
+            func=mdp.base_lin_vel,
+            params={"asset_cfg": SceneEntityCfg("robot")},
+            noise=Unoise(n_min=-0.1, n_max=0.1),
+        )
+        base_ang_vel = ObsTerm(
+            func=mdp.base_ang_vel,
+            params={"asset_cfg": SceneEntityCfg("robot")},
+            noise=Unoise(n_min=-0.1, n_max=0.1),
+        )
+        projected_gravity = ObsTerm(
+            func=mdp.projected_gravity,
+            params={"asset_cfg": SceneEntityCfg("robot")},
+            noise=Unoise(n_min=-0.05, n_max=0.05),
+        )
+        velocity_commands = ObsTerm(
+            func=mdp.generated_commands, params={"command_name": "base_velocity"}
+        )
+        joint_pos = ObsTerm(
+            func=mdp.joint_pos_rel,
+            params={"asset_cfg": SceneEntityCfg("robot")},
+            noise=Unoise(n_min=-0.05, n_max=0.05),
+        )
+        joint_vel = ObsTerm(
+            func=mdp.joint_vel_rel,
+            params={"asset_cfg": SceneEntityCfg("robot")},
+            noise=Unoise(n_min=-0.5, n_max=0.5),
+        )
+        actions = ObsTerm(func=mdp.last_action)
+        height_scan = ObsTerm(
+            func=mdp.height_scan,
+            params={"sensor_cfg": SceneEntityCfg("height_scanner")},
+            noise=Unoise(n_min=-0.1, n_max=0.1),
+            clip=(-1.0, 1.0),
+        )
+
+        def __post_init__(self):
+            self.enable_corruption = False
+            self.concatenate_terms = True
+
+    # observation groups
+    policy: PolicyCfg = PolicyCfg()
+
+
+@configclass
+class SpotVelocityRewardsCfg(SpotRewardsCfg):
+    """Spot velocity tracking simplified to match Go2 approach with boosted values."""
 
     def __post_init__(self):
         super().__post_init__()
-        self.base_motion.weight = -3.0  # -2.0
-        self.base_orientation.weight = -4.0  # -3.0
-        self.foot_slip.weight = -1.0  # -0.5
-        self.gait.weight = 15.0  # 10.0
-        self.base_linear_velocity.weight = 10.0  # 5.0
-        self.base_angular_velocity.weight = 7.5  # 5.0
-        self.joint_acc.weight = -5.0e-4  # -1.0e-4
-        self.joint_pos.weight = -1.0  # -0.7
-        self.joint_vel.weight = -5.0e-2  # -1.0e-2
-        self.joint_torques.weight = -1.0e-3  # -5.0e-4
-        self.foot_clearance.weight = 2.0  # 0.5
-        # self.body_contact.weight = -1.0e-4  # -1.0e-3
+
+        # KEEP and BOOST rewards that exist in both Go2 and Spot
+        self.base_linear_velocity.weight = (
+            25.0  # Boosted from default 5.0 (equivalent to track_lin_vel_xy_exp)
+        )
+        self.base_angular_velocity.weight = (
+            15.0  # Boosted from default 5.0 (equivalent to track_ang_vel_z_exp)
+        )
+        # Note: air_time (default 5.0) is equivalent to feet_air_time - keeping default
+        # Note: joint_torques, joint_acc equivalent to dof_torques_l2, dof_acc_l2
+
+        # DISABLE Spot-specific rewards (not present in Go2)
+        self.foot_clearance.weight = (
+            0.0  # Disabled from default 0.5 (Go2 doesn't have this)
+        )
+        self.gait.weight = 0.0  # Disabled from default 10.0 (Go2 doesn't have this)
+        self.action_smoothness.weight = (
+            0.0  # Disabled from default -1.0 (Go2 uses action_rate_l2 instead)
+        )
+        self.air_time_variance.weight = (
+            0.0  # Disabled from default -1.0 (Go2 doesn't have this)
+        )
+        self.base_motion.weight = 0.0  # Disabled from default -2.0 (Go2 uses separate lin_vel_z_l2, ang_vel_xy_l2)
+        self.base_orientation.weight = (
+            0.0  # Disabled from default -3.0 (Go2 doesn't have this)
+        )
+        self.foot_slip.weight = (
+            0.0  # Disabled from default -0.5 (Go2 doesn't have this)
+        )
+        self.joint_pos.weight = (
+            0.0  # Disabled from default -0.7 (Go2 doesn't have this)
+        )
+        self.joint_vel.weight = (
+            0.0  # Disabled from default -0.01 (Go2 doesn't have this)
+        )
+
+        # Keep the joint penalties that exist in both (with your modified values)
+        self.joint_torques.weight = (
+            -2.0e-4  # Reduced from default -5.0e-4 (equivalent to dof_torques_l2)
+        )
+        self.joint_acc.weight = (
+            -1.0e-4  # Same as default -1.0e-4 (equivalent to dof_acc_l2)
+        )
+        # Note: air_time weight=5.0 (keeping default, equivalent to feet_air_time)
 
 
 @configclass
@@ -66,7 +145,7 @@ class SpotVelocityStepEnvCfg(SpotFlatEnvCfg):
     """Spot velocity tracking with cuboid obstacles - extends Isaac's flat config."""
 
     rewards: SpotRewardsCfg = SpotVelocityRewardsCfg()
-    # terminations: SpotTerminationsCfg = SpotVelocityTerminationCfg()
+    observations: SpotObservationsCfg = SpotObservationsCfg()
 
     def __post_init__(self):
         # Initialize parent configuration first
@@ -107,3 +186,11 @@ class SpotVelocityStepEnvCfg(SpotFlatEnvCfg):
 
             # Update the terrain generator
             self.scene.terrain.terrain_generator.sub_terrains = updated_sub_terrains
+            self.scene.height_scanner = RayCasterCfg(
+                prim_path="{ENV_REGEX_NS}/Robot/body",
+                offset=RayCasterCfg.OffsetCfg(pos=(0.0, 0.0, 20.0)),
+                attach_yaw_only=True,
+                pattern_cfg=patterns.GridPatternCfg(resolution=0.1, size=[1.6, 1.0]),
+                debug_vis=False,
+                mesh_prim_paths=["/World/ground"],
+            )

@@ -24,7 +24,7 @@ class MLPPPOAgent(nn.Module):
             nn.ELU(),
             layer_init(nn.Linear(256, 256), std=0.01),
             nn.ELU(),
-            layer_init(nn.Linear(256, n_act), std=1.0),
+            layer_init(nn.Linear(256, n_act), std=10.0, bias_const=10.0),
         )
         self.actor_logstd = nn.Parameter(torch.log(init_noise_std * torch.ones(n_act)))
 
@@ -34,7 +34,6 @@ class MLPPPOAgent(nn.Module):
     def get_action_and_value(self, obs, action=None):
         action_mean = self.actor_mean(obs)
         action_logstd = self.actor_logstd.expand_as(action_mean)
-        action_logstd = torch.clamp(action_logstd, -20, 2)
         action_std = torch.exp(action_logstd)
         probs = Normal(action_mean, action_std)
         if action is None:
