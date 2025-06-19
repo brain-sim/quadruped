@@ -1,0 +1,126 @@
+# @package _global_
+defaults:
+  - override /hydra/launcher: basic
+
+# =============================================================================
+# COMPREHENSIVE SWEEP CONFIGURATION
+# =============================================================================
+# This file contains all possible sweep configurations
+# Uncomment the sections you want to sweep over
+# =============================================================================
+
+# Environment Sweeps
+# env:
+#   num_envs: 2048,4096,8192
+#   seed: 1,42,123,456,999
+
+# PPO Algorithm Sweeps
+experiment:
+  # Learning rate sweep - MOST IMPORTANT
+  learning_rate: 0.0001,0.0003,0.001,0.003
+  
+  # Entropy coefficient sweep
+  ent_coef: 0.0,0.001,0.005,0.01,0.05
+  
+  # Discount factor sweep
+  # gamma: 0.95,0.99,0.995,0.999
+  
+  # GAE lambda sweep
+  # gae_lambda: 0.9,0.95,0.98,0.99
+  
+  # Training dynamics
+  # num_steps: 16,24,32,48
+  # num_minibatches: 2,4,8,16
+  # update_epochs: 3,5,10,15
+  
+  # Clipping
+  # clip_coef: 0.1,0.2,0.3
+  # max_grad_norm: 0.5,1.0,2.0
+  
+  # Value function
+  # vf_coef: 0.5,1.0,2.0
+
+# Neural Network Architecture Sweeps
+agent:
+  # Network size sweep
+  actor_hidden_dims: "[256,128,64]","[512,256,128]","[1024,512,256]","[512,512,512]"
+  critic_hidden_dims: "[256,128,64]","[512,256,128]","[1024,512,256]","[512,512,512]"
+  
+  # Activation function sweep
+  actor_activation: ReLU,ELU,Tanh,GELU
+  
+  # Noise configuration
+  # noise_std_type: scalar,log
+  # init_noise_std: 0.5,1.0,1.5,2.0
+
+# Reward Function Sweeps - MOST IMPORTANT FOR PERFORMANCE
+rewards:
+  # Primary tracking rewards
+  base_linear_velocity_weight: 10.0,15.0,20.0,25.0,30.0
+  base_angular_velocity_weight: 10.0,15.0,20.0,25.0,30.0
+  
+  # Gait and movement quality
+  air_time_weight: 5.0,10.0,15.0,20.0
+  gait_weight: 0.0,1.0,2.5,5.0,7.5
+  foot_clearance_weight: 0.0,0.1,0.5,1.0
+  
+  # Joint penalties
+  joint_torques_weight: -0.00001,-0.0001,-0.0005,-0.001,-0.002
+  joint_acc_weight: -0.00001,-0.0001,-0.0005,-0.001
+  action_smoothness_weight: -0.001,-0.01,-0.1
+  
+  # Base penalties
+  base_motion_weight: -0.5,-1.0,-2.0,-3.0
+  base_orientation_weight: -0.5,-1.0,-2.0,-3.0
+  
+  # Survival bonus
+  survival_bonus_weight: 0.0,0.005,0.01,0.02,0.05
+
+# Wandb Configuration
+wandb:
+  tags: [sweep, ppo, quadruped, isaac_lab]
+  notes: "Comprehensive hyperparameter sweep"
+
+# Hydra Launcher Configuration
+hydra:
+  launcher:
+    n_jobs: 4  # Number of parallel jobs - adjust based on your hardware
+  job:
+    chdir: true
+  sweep:
+    dir: multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    subdir: ${hydra:job.num}
+
+# =============================================================================
+# PREDEFINED SWEEP SCENARIOS
+# =============================================================================
+# You can also create specific scenarios by commenting/uncommenting sections above
+# Or use the examples below by copying them to a separate config file
+
+# SCENARIO 1: Quick Learning Rate + Entropy Sweep (9 runs)
+# experiment:
+#   learning_rate: 0.0003,0.001,0.003
+#   ent_coef: 0.0,0.005,0.01
+
+# SCENARIO 2: Reward Function Focus (25 runs)
+# rewards:
+#   base_linear_velocity_weight: 15.0,20.0,25.0,30.0,35.0
+#   base_angular_velocity_weight: 15.0,20.0,25.0,30.0,35.0
+
+# SCENARIO 3: Network Architecture Sweep (12 runs)
+# agent:
+#   actor_hidden_dims: "[256,128]","[512,256,128]","[1024,512,256]"
+#   actor_activation: ReLU,ELU,Tanh,GELU
+
+# SCENARIO 4: Joint Penalty Tuning (15 runs)
+# rewards:
+#   joint_torques_weight: -0.0001,-0.0005,-0.001
+#   joint_acc_weight: -0.0001,-0.0005,-0.001
+#   action_smoothness_weight: -0.001,-0.01,-0.1
+
+# SCENARIO 5: Comprehensive Small Sweep (8 runs)
+# experiment:
+#   learning_rate: 0.0003,0.001
+#   ent_coef: 0.005,0.01
+# rewards:
+#   base_linear_velocity_weight: 20.0,25.0 

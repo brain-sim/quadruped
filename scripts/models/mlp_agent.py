@@ -10,7 +10,7 @@ class MLPPPOAgent(nn.Module):
         n_act,
         actor_hidden_dims=[512, 256, 128],
         critic_hidden_dims=[512, 256, 128],
-        actor_activation=nn.ELU,
+        activation=nn.ELU,
         noise_std_type="scalar",
         init_noise_std=1.0,
     ):
@@ -27,36 +27,40 @@ class MLPPPOAgent(nn.Module):
         for i in range(len(actor_hidden_dims)):
             if i == 0:
                 actor_layers.append(nn.Linear(n_obs, actor_hidden_dims[i]))
-                critic_layers.append(nn.Linear(n_obs, critic_hidden_dims[i]))
             else:
                 actor_layers.append(
                     nn.Linear(actor_hidden_dims[i - 1], actor_hidden_dims[i])
                 )
+            actor_layers.append(activation())
+        for i in range(len(critic_hidden_dims)):
+            if i == 0:
+                critic_layers.append(nn.Linear(n_obs, critic_hidden_dims[i]))
+            else:
                 critic_layers.append(
                     nn.Linear(critic_hidden_dims[i - 1], critic_hidden_dims[i])
                 )
-            actor_layers.append(actor_activation())
-            critic_layers.append(actor_activation())
+            critic_layers.append(activation())
         actor_layers.append(nn.Linear(actor_hidden_dims[-1], n_act))
         critic_layers.append(nn.Linear(critic_hidden_dims[-1], 1))
         self.actor = nn.Sequential(*actor_layers)
         self.critic = nn.Sequential(*critic_layers)
+        Normal.set_default_validate_args(False)
 
     def get_value(self, x):
         return self.critic(x)
 
-    def get_action_and_value(self, obs, action=None):
+    def get_action_and_value(self, obs, action=None, eval_mode=False):
         action_mean = self.actor(obs)
         action_std = self.actor_std.expand_as(action_mean)
         if self.noise_std_type == "log":
             action_std = torch.clamp(action_std, -20.0, 2.0)
             action_std = torch.exp(action_std)
-        probs = Normal(action_mean, action_std)
-        if action is None:
-            action = probs.sample()
+        dist = Normal(action_mean, action_std)
+        if not eval_mode and action is None:
+            action = dist.sample()
         return (
             action,
-            probs.log_prob(action).sum(1),
-            probs.entropy().sum(1),
+            dist.log_prob(action).sum(dim=-1),
+            dist.entropy().sum(dim=-1),
             self.critic(obs),
         )

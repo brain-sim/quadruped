@@ -71,6 +71,7 @@ class CNNPPOAgent(nn.Module):
             self.actor_std = nn.Parameter(torch.log(init_noise_std * torch.ones(n_act)))
         else:
             raise ValueError(f"Invalid noise_std_type: {self.noise_std_type}")
+        Normal.set_default_validate_args(False)
 
     def extract_image(self, x: torch.Tensor) -> torch.Tensor:
         """Extract features from image portion of the state vector."""

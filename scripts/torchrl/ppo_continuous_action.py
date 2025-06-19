@@ -17,7 +17,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from isaaclab.utils import configclass
 from isaaclab.utils.dict import print_dict
 from models import CNNPPOAgent, MLPPPOAgent
-from utils import load_args, seed_everything
+from utils import load_args, seed_everything, update_learning_rate_adaptive
 
 
 @configclass
@@ -52,7 +52,7 @@ class EnvArgs:
 class ExperimentArgs:
     exp_name: str = os.path.basename(__file__)[: -len(".py")]
     """the name of this experiment"""
-    torch_deterministic: bool = True
+    torch_deterministic: bool = False
     """if toggled, `torch.backends.cudnn.deterministic=False`"""
     device: str = "cuda:0"
     """device to use for training"""
@@ -66,7 +66,7 @@ class ExperimentArgs:
     """the learning rate of the optimizer"""
     num_steps: int = 24
     """the number of steps to run in each environment per policy rollout"""
-    anneal_lr: bool = True
+    anneal_lr: bool = False
     """Toggle learning rate annealing for policy and value networks"""
     gamma: float = 0.99
     """the discount factor gamma"""
@@ -124,6 +124,14 @@ class ExperimentArgs:
     """whether to log the training process."""
     log_video: bool = False
     """whether to log the video."""
+
+    # Adaptive learning rate parameters
+    adaptive_lr: bool = True
+    """Use adaptive learning rate based on KL divergence"""
+    desired_kl: float = 0.01
+    """Target KL divergence for adaptive learning rate"""
+    lr_multiplier: float = 1.5
+    """Factor to multiply/divide learning rate by"""
 
 
 @configclass
@@ -207,7 +215,7 @@ def make_isaaclab_env(
         )
         print_dict({"max_episode_steps": env.unwrapped.max_episode_length}, nesting=4)
         env = IsaacLabRecordEpisodeStatistics(env)
-        env = IsaacLabVecEnvWrapper(env, clip_actions=1.0)
+        env = IsaacLabVecEnvWrapper(env)
 
         if capture_video and log_dir is not None:
             video_kwargs = {
@@ -356,6 +364,12 @@ def main(args):
 
             # TRY NOT TO MODIFY: execute the game and log data.
             next_obs, reward, next_done, infos = envs.step(action)
+            # Bootstrapping on time outs
+            if "time_outs" in infos:
+                reward += args.gamma * torch.squeeze(
+                    value * infos["time_outs"].unsqueeze(1).to(device), 1
+                )
+
             if "episode" in infos:
                 for r in infos["episode"]["r"]:
                     max_ep_ret = max(max_ep_ret, r)
@@ -471,6 +485,15 @@ def main(args):
 
             if args.target_kl is not None and approx_kl > args.target_kl:
                 break
+
+        # ADD THIS: Apply adaptive learning rate after the update epochs
+        if args.adaptive_lr:
+            new_lr = update_learning_rate_adaptive(
+                optimizer, approx_kl.item(), args.desired_kl, args.lr_multiplier
+            )
+            # Log the learning rate change
+            if global_step_burnin is not None and iteration % args.log_interval == 0:
+                wandb.log({"learning_rate": new_lr}, step=global_step)
 
         y_pred, y_true = b_values.cpu().numpy(), b_returns.cpu().numpy()
         var_y = np.var(y_true)

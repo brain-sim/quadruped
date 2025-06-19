@@ -1,0 +1,101 @@
+# Environment Configuration
+env:
+  task: Spot-Velocity-Flat-Obstacle-Quadruped-v0
+  env_cfg_entry_point: env_cfg_entry_point
+  num_envs: 4096
+  seed: 1
+  capture_video: true
+  video: false
+  video_length: 200
+  video_interval: 2000
+  disable_fabric: false
+  distributed: false
+  headless: false
+  enable_cameras: false
+
+# PPO Algorithm Configuration  
+experiment:
+  exp_name: ppo_continuous_action
+  torch_deterministic: true
+  device: cuda:0
+  total_timesteps: 10_000_000
+  learning_rate: 0.001
+  num_steps: 24
+  anneal_lr: true
+  gamma: 0.99
+  gae_lambda: 0.95
+  num_minibatches: 4
+  update_epochs: 5
+  norm_adv: false
+  clip_coef: 0.2
+  clip_vloss: true
+  ent_coef: 0.005
+  vf_coef: 1.0
+  max_grad_norm: 1.0
+  target_kl: 0.01
+  init_at_random_ep_len: false
+  measure_burnin: 3
+  checkpoint_interval: 10
+  num_eval_envs: 3
+  num_eval_env_steps: 200
+  log_interval: 10
+
+# Neural Network Agent Configuration
+agent:
+  agent_type: MLPPPOAgent
+  actor_hidden_dims: [512, 256, 128]
+  critic_hidden_dims: [512, 256, 128]
+  actor_activation: ELU
+  noise_std_type: scalar
+  init_noise_std: 1.0
+
+# Reward Function Configuration
+rewards:
+  # Positive rewards
+  base_linear_velocity_weight: 20.0
+  base_angular_velocity_weight: 20.0
+  air_time_weight: 10.0
+  foot_clearance_weight: 0.1
+  gait_weight: 2.5
+  survival_bonus_weight: 0.01
+  
+  # Negative rewards (penalties)
+  joint_torques_weight: -0.0005
+  joint_acc_weight: -0.0001
+  action_smoothness_weight: -0.01
+  base_motion_weight: -2.0
+  base_orientation_weight: -1.0
+  
+  # Disabled rewards
+  air_time_variance_weight: 0.0
+  foot_slip_weight: 0.0
+  joint_pos_weight: 0.0
+  joint_vel_weight: 0.0
+
+# Weights & Biases Configuration
+wandb:
+  project: ppo_continuous_action
+  log: true
+  log_video: false
+  tags: [ppo, quadruped, isaac_lab]
+  notes: null
+
+# Hydra Configuration
+hydra:
+  job:
+    chdir: true
+  run:
+    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    subdir: ${hydra:job.num}
+
+# Backward compatibility (flat structure for non-Hydra mode)
+task: ${env.task}
+num_envs: ${env.num_envs}
+seed: ${env.seed}
+exp_name: ${experiment.exp_name}
+learning_rate: ${experiment.learning_rate}
+agent_type: ${agent.agent_type}
+log: ${wandb.log}
+log_video: ${wandb.log_video}
