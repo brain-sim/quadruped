@@ -26,7 +26,7 @@ class EnvArgs:
     """the id of the environment"""
     env_cfg_entry_point: str = "env_cfg_entry_point"
     """the entry point of the environment configuration"""
-    num_envs: int = 512
+    num_envs: int = 4096
     """the number of parallel environments to simulate"""
     seed: int = 1
     """seed of the environment"""
@@ -62,9 +62,9 @@ class ExperimentArgs:
     """the id of the environment"""
     total_timesteps: int = 10_000_000
     """total timesteps of the experiments"""
-    learning_rate: float = 3e-4
+    learning_rate: float = 1e-3
     """the learning rate of the optimizer"""
-    num_steps: int = 64
+    num_steps: int = 24
     """the number of steps to run in each environment per policy rollout"""
     anneal_lr: bool = True
     """Toggle learning rate annealing for policy and value networks"""
@@ -72,9 +72,9 @@ class ExperimentArgs:
     """the discount factor gamma"""
     gae_lambda: float = 0.95
     """the lambda for the general advantage estimation"""
-    num_minibatches: int = 8
+    num_minibatches: int = 4
     """the number of mini-batches"""
-    update_epochs: int = 10
+    update_epochs: int = 5
     """the K epochs to update the policy"""
     norm_adv: bool = False
     """Toggles advantages normalization"""
@@ -82,7 +82,7 @@ class ExperimentArgs:
     """the surrogate clipping coefficient"""
     clip_vloss: bool = True
     """Toggles whether or not to use a clipped loss for the value function, as per the paper."""
-    ent_coef: float = 0.0
+    ent_coef: float = 0.005
     """coefficient of the entropy"""
     vf_coef: float = 1.0
     """coefficient of the value function"""
@@ -90,6 +90,8 @@ class ExperimentArgs:
     """the maximum norm for the gradient clipping"""
     target_kl: float = 0.01
     """the target KL divergence threshold"""
+    init_at_random_ep_len: bool = False
+    """randomize initial episode lengths (for exploration)"""
 
     # to be filled in runtime
     batch_size: int = 0
@@ -293,6 +295,14 @@ def main(args):
 
     next_obs, _ = envs.reset()
     next_done = torch.zeros(args.num_envs).to(device)
+
+    # randomize initial episode lengths (for exploration)
+    if args.init_at_random_ep_len:
+        envs.unwrapped.episode_length_buf = torch.randint_like(
+            envs.unwrapped.episode_length_buf,
+            high=int(envs.unwrapped.max_episode_length),
+        )
+
     max_ep_ret = -float("inf")
     max_ep_reward = -float("inf")
     success_rates, avg_reward_per_step, avg_returns, max_ep_length, goals_reached = (
@@ -302,7 +312,13 @@ def main(args):
         [],
         [],
     )
-    pbar = tqdm.tqdm(range(1, args.num_iterations + 1))
+
+    # Create two static progress bars
+    iteration_pbar = tqdm.tqdm(
+        total=args.num_iterations, desc="Iterations", position=0, leave=True
+    )
+    step_pbar = tqdm.tqdm(total=args.num_steps, desc="Steps", position=1, leave=True)
+
     global_step_burnin = None
     start_time = None
     desc = ""
@@ -312,7 +328,7 @@ def main(args):
         # Randomly choose minimum of 9 environments or all environments
         indices = torch.randperm(args.num_envs)[: min(9, args.num_envs)].to(device)
 
-    for iteration in pbar:
+    for iteration in range(1, args.num_iterations + 1):
         if iteration == args.measure_burnin:
             global_step_burnin = global_step
             start_time = time.time()
@@ -322,6 +338,9 @@ def main(args):
             frac = 1.0 - (iteration - 1.0) / args.num_iterations
             lrnow = frac * args.learning_rate
             optimizer.param_groups[0]["lr"] = lrnow
+
+        # Reset step progress bar for each iteration
+        step_pbar.reset()
 
         for step in range(0, args.num_steps):
             global_step += args.num_envs
@@ -336,11 +355,7 @@ def main(args):
             logprobs[step] = logprob
 
             # TRY NOT TO MODIFY: execute the game and log data.
-            # next_obs_buf, reward, terminations, truncations, infos = envs.step(action)
-            # next_obs = next_obs_buf["policy"]
-            # next_done = torch.logical_or(terminations, truncations).float()
             next_obs, reward, next_done, infos = envs.step(action)
-            print(next_obs[..., -1])
             if "episode" in infos:
                 for r in infos["episode"]["r"]:
                     max_ep_ret = max(max_ep_ret, r)
@@ -361,6 +376,9 @@ def main(args):
                 )
                 video_frames.append(frame)
             rewards[step] = reward.view(-1)
+
+            # Update step progress bar
+            step_pbar.update(1)
 
         # bootstrap value if not done
         with torch.no_grad():
@@ -437,9 +455,9 @@ def main(args):
                     )
                     v_loss_clipped = (v_clipped - b_returns[mb_inds]) ** 2
                     v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
-                    v_loss = 0.5 * v_loss_max.mean()
+                    v_loss = v_loss_max.mean()
                 else:
-                    v_loss = 0.5 * ((newvalue - b_returns[mb_inds]) ** 2).mean()
+                    v_loss = ((newvalue - b_returns[mb_inds]) ** 2).mean()
 
                 entropy_loss = entropy.mean()
                 loss = pg_loss - args.ent_coef * entropy_loss + v_loss * args.vf_coef
@@ -500,7 +518,8 @@ def main(args):
                     [],
                     [],
                 )
-            pbar.set_description(f"spd(sps): {speed:3.1f}, " + desc)
+            iteration_desc = f"spd(sps): {speed:3.1f}, " + desc
+            iteration_pbar.set_description(iteration_desc)
             wandb.log(
                 {
                     "speed": speed,
@@ -537,6 +556,13 @@ def main(args):
                 best_return = mean_return
                 best_step = global_step
                 best_ckpt = ckpt_path
+
+        # Update iteration progress bar
+        iteration_pbar.update(1)
+
+    # Close progress bars
+    step_pbar.close()
+    iteration_pbar.close()
 
     envs.close()
     del envs

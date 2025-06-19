@@ -6,31 +6,103 @@
 
 # Import base Isaac Lab MDP functions
 import isaaclab.terrains as terrain_gen
-import isaaclab_tasks.manager_based.locomotion.velocity.mdp as mdp
-from isaaclab.envs.mdp import *  # noqa: F401, F403
+import isaaclab_tasks.manager_based.locomotion.velocity.mdp as velocity_mdp
+from isaaclab.envs import mdp
 from isaaclab.managers import ObservationGroupCfg as ObsGroup
 from isaaclab.managers import ObservationTermCfg as ObsTerm
-from isaaclab.managers import SceneEntityCfg
+from isaaclab.managers import RewardTermCfg, SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.sensors import RayCasterCfg, patterns
+
+# Replace the terrain configuration completely
+from isaaclab.terrains.config.rough import ROUGH_TERRAINS_CFG
 from isaaclab.utils import configclass
 from isaaclab.utils.noise import AdditiveUniformNoiseCfg as Unoise
 from isaaclab_tasks.manager_based.locomotion.velocity.config.spot.flat_env_cfg import (  # noqa: F401, F403
     SpotFlatEnvCfg,
     SpotRewardsCfg,
-    SpotTerminationsCfg,
 )
-from isaaclab_tasks.manager_based.locomotion.velocity.config.spot.mdp import *  # noqa: F401, F403
 
 from .mdp import *  # noqa: F401, F403
 
 
 @configclass
-class SpotVelocityTerminationCfg(SpotTerminationsCfg):
-    """Spot velocity tracking on flat terrain - minimal extension of Isaac's config."""
+class SpotVelocityRewardsCfg(SpotRewardsCfg):
+    """Spot velocity tracking simplified to match Go2 approach with boosted values."""
 
-    random_steps = DoneTerm(
-        func=random_termination,
+    def __post_init__(self):
+        super().__post_init__()
+
+        # KEEP and BOOST rewards that exist in both Go2 and Spot
+        self.base_linear_velocity.weight = (
+            20.0  # Boosted from default 5.0 (equivalent to track_lin_vel_xy_exp)
+        )
+        self.base_angular_velocity.weight = (
+            20.0  # Boosted from default 5.0 (equivalent to track_ang_vel_z_exp)
+        )
+        # Note: air_time (default 5.0) is equivalent to feet_air_time - keeping default
+        # Note: joint_torques, joint_acc equivalent to dof_torques_l2, dof_acc_l2
+        self.air_time.weight = (
+            10.0  # Boosted from default 5.0 (equivalent to track_air_time_exp)
+        )
+
+        # DISABLE Spot-specific rewards (not present in Go2)
+        self.foot_clearance.weight = (
+            0.1  # Disabled from default 0.5 (Go2 doesn't have this)
+        )
+        self.gait.weight = 2.5  # Disabled from default 10.0 (Go2 doesn't have this)
+        self.action_smoothness.weight = (
+            -1.0e-2  # Disabled from default -1.0 (Go2 uses action_rate_l2 instead)
+        )
+        self.air_time_variance.weight = (
+            0.0  # Disabled from default -1.0 (Go2 doesn't have this)
+        )
+        self.foot_slip.weight = (
+            0.0  # Disabled from default -0.5 (Go2 doesn't have this)
+        )
+        self.joint_pos.weight = (
+            0.0  # Disabled from default -0.7 (Go2 doesn't have this)
+        )
+        self.joint_vel.weight = (
+            0.0  # Disabled from default -0.01 (Go2 doesn't have this)
+        )
+
+        # Keep the joint penalties that exist in both (with your modified values)
+        self.joint_torques.weight = (
+            -5.0e-4  # Reduced from default -5.0e-4 (equivalent to dof_torques_l2)
+        )
+        self.joint_acc.weight = (
+            -1.0e-4  # Same as default -1.0e-4 (equivalent to dof_acc_l2)
+        )
+        # Note: air_time weight=5.0 (keeping default, equivalent to feet_air_time)
+
+        self.base_motion.weight = (
+            -2.0
+        )  # Disabled from default -2.0 (Go2 uses separate lin_vel_z_l2, ang_vel_xy_l2)
+        self.base_orientation.weight = (
+            -1.0  # Disabled from default -3.0 (Go2 doesn't have this)
+        )
+        self.survival_bonus = RewardTermCfg(
+            func=mdp.is_alive,
+            weight=1.0e-2,  # Constant bonus for staying alive
+        )
+
+
+@configclass
+class SpotTerminationsCfg:
+    """Termination terms for the MDP."""
+
+    time_out = DoneTerm(func=velocity_mdp.time_out, time_out=True)
+    body_contact = DoneTerm(
+        func=velocity_mdp.illegal_contact,
+        params={
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["body"]),
+            "threshold": 1.0,
+        },
+    )
+    terrain_out_of_bounds = DoneTerm(
+        func=velocity_mdp.terrain_out_of_bounds,
+        params={"asset_cfg": SceneEntityCfg("robot"), "distance_buffer": 3.0},
         time_out=True,
     )
 
@@ -75,9 +147,8 @@ class SpotObservationsCfg:
         actions = ObsTerm(func=mdp.last_action)
         height_scan = ObsTerm(
             func=mdp.height_scan,
-            params={"sensor_cfg": SceneEntityCfg("height_scanner")},
+            params={"sensor_cfg": SceneEntityCfg("height_scanner"), "offset": 0.0},
             noise=Unoise(n_min=-0.1, n_max=0.1),
-            clip=(-1.0, 1.0),
         )
 
         def __post_init__(self):
@@ -89,108 +160,76 @@ class SpotObservationsCfg:
 
 
 @configclass
-class SpotVelocityRewardsCfg(SpotRewardsCfg):
-    """Spot velocity tracking simplified to match Go2 approach with boosted values."""
-
-    def __post_init__(self):
-        super().__post_init__()
-
-        # KEEP and BOOST rewards that exist in both Go2 and Spot
-        self.base_linear_velocity.weight = (
-            25.0  # Boosted from default 5.0 (equivalent to track_lin_vel_xy_exp)
-        )
-        self.base_angular_velocity.weight = (
-            15.0  # Boosted from default 5.0 (equivalent to track_ang_vel_z_exp)
-        )
-        # Note: air_time (default 5.0) is equivalent to feet_air_time - keeping default
-        # Note: joint_torques, joint_acc equivalent to dof_torques_l2, dof_acc_l2
-
-        # DISABLE Spot-specific rewards (not present in Go2)
-        self.foot_clearance.weight = (
-            0.0  # Disabled from default 0.5 (Go2 doesn't have this)
-        )
-        self.gait.weight = 0.0  # Disabled from default 10.0 (Go2 doesn't have this)
-        self.action_smoothness.weight = (
-            0.0  # Disabled from default -1.0 (Go2 uses action_rate_l2 instead)
-        )
-        self.air_time_variance.weight = (
-            0.0  # Disabled from default -1.0 (Go2 doesn't have this)
-        )
-        self.base_motion.weight = 0.0  # Disabled from default -2.0 (Go2 uses separate lin_vel_z_l2, ang_vel_xy_l2)
-        self.base_orientation.weight = (
-            0.0  # Disabled from default -3.0 (Go2 doesn't have this)
-        )
-        self.foot_slip.weight = (
-            0.0  # Disabled from default -0.5 (Go2 doesn't have this)
-        )
-        self.joint_pos.weight = (
-            0.0  # Disabled from default -0.7 (Go2 doesn't have this)
-        )
-        self.joint_vel.weight = (
-            0.0  # Disabled from default -0.01 (Go2 doesn't have this)
-        )
-
-        # Keep the joint penalties that exist in both (with your modified values)
-        self.joint_torques.weight = (
-            -2.0e-4  # Reduced from default -5.0e-4 (equivalent to dof_torques_l2)
-        )
-        self.joint_acc.weight = (
-            -1.0e-4  # Same as default -1.0e-4 (equivalent to dof_acc_l2)
-        )
-        # Note: air_time weight=5.0 (keeping default, equivalent to feet_air_time)
-
-
-@configclass
 class SpotVelocityStepEnvCfg(SpotFlatEnvCfg):
-    """Spot velocity tracking with cuboid obstacles - extends Isaac's flat config."""
+    """Spot velocity tracking with custom terrain pattern and center spawning."""
 
     rewards: SpotRewardsCfg = SpotVelocityRewardsCfg()
+    terminations: SpotTerminationsCfg = SpotTerminationsCfg()
     observations: SpotObservationsCfg = SpotObservationsCfg()
+
+    def __init__(self, include_height_scan: bool = False):
+        """Initialize environment configuration.
+
+        Args:
+            include_height_scan: Whether to include height scan observation. Defaults to False.
+        """
+        self.include_height_scan = include_height_scan
+        super().__init__()
 
     def __post_init__(self):
         # Initialize parent configuration first
         super().__post_init__()
 
-        if hasattr(self.scene, "terrain") and hasattr(
-            self.scene.terrain, "terrain_generator"
+        self.scene.height_scanner = RayCasterCfg(
+            prim_path="{ENV_REGEX_NS}/Robot/body",
+            attach_yaw_only=True,
+            pattern_cfg=patterns.GridPatternCfg(
+                resolution=0.5,  # 0.5m spacing between points
+                size=[1.0, 1.0],  # 1m x 1m grid area
+                direction=(0.0, 0.0, -1.0),  # Point directly downward
+            ),
+            debug_vis=True,
+            mesh_prim_paths=["/World/ground"],
+            max_distance=50.0,  # Maximum detection distance
+        )
+
+        # Update sensor period to match simulation
+        if (
+            hasattr(self.scene, "height_scanner")
+            and self.scene.height_scanner is not None
         ):
-            # Get existing sub_terrains or create new dict
-            existing_sub_terrains = getattr(
-                self.scene.terrain.terrain_generator, "sub_terrains", {}
-            )
+            self.scene.height_scanner.update_period = self.decimation * self.sim.dt
 
-            # Add step terrain configuration
-            step_terrain = {
-                "random_steps": terrain_gen.MeshRandomGridTerrainCfg(
-                    proportion=0.2,  # 30% of terrain will be steps
-                    grid_width=0.45,  # Width of each step
-                    grid_height_range=(0.05, 0.15),  # Step heights from 5cm to 25cm
-                    platform_width=2.0,  # Platform width between steps
-                ),
-                "pyramid_steps": terrain_gen.MeshPyramidStairsTerrainCfg(
-                    proportion=0.2,  # 30% of terrain will be steps
-                    step_width=0.45,  # Width of each step
-                    step_height_range=(0.05, 0.20),  # Step heights from 5cm to 10cm
-                    platform_width=2.0,  # Platform width between steps
-                ),
-                "inverted_pyramid_steps": terrain_gen.MeshInvertedPyramidStairsTerrainCfg(
-                    proportion=0.2,  # 30% of terrain will be steps
-                    step_width=0.45,  # Width of each step
-                    step_height_range=(0.05, 0.20),  # Step heights from 5cm to 10cm
-                    platform_width=2.0,  # Platform width between steps
-                ),
-            }
+        # Create our custom terrain mix for the pattern
+        custom_terrain_cfg = ROUGH_TERRAINS_CFG.copy()
+        custom_terrain_cfg.sub_terrains = {
+            "pyramid_steps": terrain_gen.MeshPyramidStairsTerrainCfg(
+                proportion=0.2,  # P terrain
+                step_width=0.45,
+                step_height_range=(0.05, 0.15),
+                platform_width=3.0,  # Each sub-terrain is 3x3
+            ),
+            "inverted_pyramid_steps": terrain_gen.MeshInvertedPyramidStairsTerrainCfg(
+                proportion=0.2,  # I terrain
+                step_width=0.45,
+                step_height_range=(0.05, 0.15),
+                platform_width=3.0,  # Each sub-terrain is 3x3
+            ),
+            "random_steps": terrain_gen.MeshRandomGridTerrainCfg(
+                proportion=0.2,  # R terrain
+                grid_width=0.45,
+                grid_height_range=(0.05, 0.10),
+                platform_width=3.0,  # Each sub-terrain is 3x3
+            ),
+            "rough_terrain": terrain_gen.HfRandomUniformTerrainCfg(
+                proportion=0.2,  # R terrain
+                noise_range=(0.02, 0.05),
+                noise_step=0.02,
+                border_width=0.25,
+            ),
+        }
 
-            # Merge with existing sub_terrains
-            updated_sub_terrains = {**existing_sub_terrains, **step_terrain}
-
-            # Update the terrain generator
-            self.scene.terrain.terrain_generator.sub_terrains = updated_sub_terrains
-            self.scene.height_scanner = RayCasterCfg(
-                prim_path="{ENV_REGEX_NS}/Robot/body",
-                offset=RayCasterCfg.OffsetCfg(pos=(0.0, 0.0, 20.0)),
-                attach_yaw_only=True,
-                pattern_cfg=patterns.GridPatternCfg(resolution=0.1, size=[1.6, 1.0]),
-                debug_vis=False,
-                mesh_prim_paths=["/World/ground"],
-            )
+        # Replace the terrain generator and disable debug visualization
+        if hasattr(self.scene, "terrain"):
+            self.scene.terrain.terrain_generator = custom_terrain_cfg
+            self.scene.terrain.debug_vis = False
