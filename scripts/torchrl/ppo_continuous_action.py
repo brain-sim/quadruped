@@ -215,7 +215,9 @@ def make_isaaclab_env(
         )
         print_dict({"max_episode_steps": env.unwrapped.max_episode_length}, nesting=4)
         env = IsaacLabRecordEpisodeStatistics(env)
-        env = IsaacLabVecEnvWrapper(env)
+        env = IsaacLabVecEnvWrapper(
+            env
+        )  # was earlier set to clip_actions=1.0 causing issues.
 
         if capture_video and log_dir is not None:
             video_kwargs = {
