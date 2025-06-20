@@ -338,6 +338,12 @@ def main(args):
         # Randomly choose minimum of 9 environments or all environments
         indices = torch.randperm(args.num_envs)[: min(9, args.num_envs)].to(device)
 
+    # Add these buffers before the training loop starts
+    reward_info_buffer = {}
+    metric_info_buffer = {}
+    curriculum_info_buffer = {}
+    termination_info_buffer = {}
+
     for iteration in range(1, args.num_iterations + 1):
         if iteration == args.measure_burnin:
             global_step_burnin = global_step
@@ -364,13 +370,50 @@ def main(args):
             actions[step] = action
             logprobs[step] = logprob
 
-            # TRY NOT TO MODIFY: execute the game and log data.
+            # TRY NOT TO MODIFY BEGIN: execute the game and log data.
             next_obs, reward, next_done, infos = envs.step(action)
             # Bootstrapping on time outs
             if "time_outs" in infos:
                 reward += args.gamma * torch.squeeze(
                     value * infos["time_outs"].unsqueeze(1).to(device), 1
                 )
+            # TRY NOT TO MODIFY END:
+
+            # Capture detailed logging information
+            if "log" in infos:
+                log_data = infos["log"]
+
+                # Capture Episode Rewards
+                for key, value in log_data.items():
+                    if key.startswith("Episode_Reward/"):
+                        reward_name = key.replace("Episode_Reward/", "")
+                        if reward_name not in reward_info_buffer:
+                            reward_info_buffer[reward_name] = []
+                        reward_info_buffer[reward_name].append(value)
+
+                # Capture Metrics
+                for key, value in log_data.items():
+                    if key.startswith("Metrics/"):
+                        metric_name = key.replace("Metrics/", "")
+                        if metric_name not in metric_info_buffer:
+                            metric_info_buffer[metric_name] = []
+                        metric_info_buffer[metric_name].append(value)
+
+                # Capture Curriculum info
+                for key, value in log_data.items():
+                    if key.startswith("Curriculum/"):
+                        curriculum_name = key.replace("Curriculum/", "")
+                        if curriculum_name not in curriculum_info_buffer:
+                            curriculum_info_buffer[curriculum_name] = []
+                        curriculum_info_buffer[curriculum_name].append(value)
+
+                # Capture Termination info
+                for key, value in log_data.items():
+                    if key.startswith("Episode_Termination/"):
+                        termination_name = key.replace("Episode_Termination/", "")
+                        if termination_name not in termination_info_buffer:
+                            termination_info_buffer[termination_name] = []
+                        termination_info_buffer[termination_name].append(value)
 
             if "episode" in infos:
                 for r in infos["episode"]["r"]:
@@ -379,6 +422,7 @@ def main(args):
                 for r in infos["episode"]["reward_max"]:
                     max_ep_reward = max(max_ep_reward, r)
                     avg_reward_per_step.append(r)
+
             if "success_rate" in infos:
                 success_rates.append(infos["success_rate"])
             if "max_episode_length" in infos:
@@ -513,7 +557,48 @@ def main(args):
                     "explained_var": explained_var,
                     "old_approx_kl": old_approx_kl,
                     "approx_kl": approx_kl,
+                    "metrics/action_max": b_actions.max().item(),
+                    "metrics/action_min": b_actions.min().item(),
+                    "metrics/obs_max": b_obs.max().item(),
+                    "metrics/obs_min": b_obs.min().item(),
                 }
+
+                # Add reward terms
+                for reward_name, reward_values in reward_info_buffer.items():
+                    if len(reward_values) > 0:
+                        logs[f"rewards/{reward_name}"] = (
+                            torch.tensor(reward_values).float().mean()
+                        )
+                # Add metrics
+                for metric_name, metric_values in metric_info_buffer.items():
+                    if len(metric_values) > 0:
+                        logs[f"metrics/{metric_name}"] = (
+                            torch.tensor(metric_values).float().mean()
+                        )
+                # Add curriculum info
+                for (
+                    curriculum_name,
+                    curriculum_values,
+                ) in curriculum_info_buffer.items():
+                    if len(curriculum_values) > 0:
+                        logs[f"curriculum/{curriculum_name}"] = (
+                            torch.tensor(curriculum_values).float().mean()
+                        )
+                # Add termination info
+                for (
+                    termination_name,
+                    termination_values,
+                ) in termination_info_buffer.items():
+                    if len(termination_values) > 0:
+                        logs[f"terminations/{termination_name}"] = (
+                            torch.tensor(termination_values).float().mean()
+                        )
+                # Clear all buffers for next interval
+                reward_info_buffer.clear()
+                metric_info_buffer.clear()
+                curriculum_info_buffer.clear()
+                termination_info_buffer.clear()
+
                 if len(avg_returns) > 0:
                     logs["avg_episode_return"] = torch.tensor(avg_returns).mean()
                     logs["max_episode_return"] = max_ep_ret
