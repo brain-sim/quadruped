@@ -160,7 +160,7 @@ class SpotObservationsCfg:
 
 
 @configclass
-class SpotVelocityStepEnvCfg(SpotFlatEnvCfg):
+class SpotVelocityRoughEnvCfg(SpotFlatEnvCfg):
     """Spot velocity tracking with custom terrain pattern and center spawning."""
 
     rewards: SpotRewardsCfg = SpotVelocityRewardsCfg()
