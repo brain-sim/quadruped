@@ -62,7 +62,7 @@ class ExperimentArgs:
     """the id of the environment"""
     total_timesteps: int = 10_000_000
     """total timesteps of the experiments"""
-    learning_rate: float = 1e-3
+    learning_rate: float = 0.001
     """the learning rate of the optimizer"""
     num_steps: int = 24
     """the number of steps to run in each environment per policy rollout"""
@@ -280,6 +280,8 @@ def main(args):
     )
     n_obs = int(np.prod(envs.observation_space["policy"].shape[1:]))
     n_act = int(np.prod(envs.action_space.shape[1:]))
+    print("n_obs:", n_obs)
+    print("n_act:", n_act)
     assert isinstance(envs.action_space, gym.spaces.Box), (
         "only continuous action space is supported"
     )

@@ -22,7 +22,7 @@ import time
 import gymnasium as gym
 import torch
 from isaaclab.app import AppLauncher
-from pynput import keyboard
+# from pynput import keyboard
 
 """Rest everything follows."""
 
@@ -274,7 +274,7 @@ def main():
     # Create environment with full Isaac reward system + obstacle extensions
     device = "cuda:0"
     env = make_isaaclab_env(
-        "Spot-Velocity-Flat-Obstacle-Quadruped-v0",
+        "Spot-Velocity-Rough-v0",
         device,
         128,
         False,
@@ -282,7 +282,8 @@ def main():
     )()
 
     obs, _ = env.reset()
-
+    print(obs["policy"].shape)
+    exit()
     # Determine the device from the environment
     if hasattr(env, "device"):
         device = env.device

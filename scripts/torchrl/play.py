@@ -11,7 +11,7 @@ import wandb
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from isaaclab.utils import configclass
-from models import CNNPPOAgent
+from models import CNNPPOAgent, MLPPPOAgent
 from utils import load_args  # add load_args import
 
 ### TODO : Make play callable while training and after training.
@@ -23,11 +23,11 @@ from utils import load_args  # add load_args import
 
 @configclass
 class EnvArgs:
-    task: str = "Spot-Velocity-Flat-Obstacle-Quadruped-v0"
+    task: str = "Spot-Velocity-Rough-v0"
     """the id of the environment"""
     env_cfg_entry_point: str = "env_cfg_entry_point"
     """the entry point of the environment configuration"""
-    num_envs: int = 64
+    num_envs: int = 4096
     """the number of parallel environments to simulate"""
     seed: int = 1
     """seed of the environment"""
@@ -58,13 +58,13 @@ class ExperimentArgs:
     device: str = "cuda:0"
     """device to use for training"""
 
-    checkpoint_path: str = "/home/user/cognitiverl/wandb/offline-run-20250602_194417-pnrq9ikt/files/checkpoints/ckpt_20480.pt"
+    checkpoint_path: str = "/home/user/quadruped/wandb/run-20250623_190314-99vn24ox/files/checkpoints/ckpt_39321600.pt"
     """path to the checkpoint to load"""
     num_eval_envs: int = 10
     """number of environments to run for evaluation/play."""
-    num_eval_env_steps: int = 50
+    num_eval_env_steps: int = 1_000
     """number of steps to run for evaluation/play."""
-    agent: str = "CNNPPOAgent"
+    agent: str = "MLPPPOAgent"
 
 
 @configclass
@@ -158,14 +158,16 @@ def main(args):
         log_dir=run_dir,
     )()
 
-    n_obs = int(np.prod(eval_envs.observation_space.shape[1:]))
+    n_obs = int(np.prod(eval_envs.observation_space["policy"].shape[1:]))
     n_act = int(np.prod(eval_envs.action_space.shape[1:]))
+    print(n_obs, n_act)
     assert isinstance(eval_envs.action_space, gym.spaces.Box), (
         "only continuous action space is supported"
     )
 
     AGENT_LOOKUP = {
         "CNNPPOAgent": CNNPPOAgent,
+        "MLPPPOAgent": MLPPPOAgent,
     }
 
     agent_class = AGENT_LOOKUP[args.agent]
@@ -174,6 +176,7 @@ def main(args):
     device = (
         torch.device(args.device) if torch.cuda.is_available() else torch.device("cpu")
     )
+    print()
     agent.to(device)
     agent.eval()
 

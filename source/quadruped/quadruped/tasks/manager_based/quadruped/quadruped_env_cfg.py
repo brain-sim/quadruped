@@ -10,7 +10,7 @@ import isaaclab_tasks.manager_based.locomotion.velocity.mdp as velocity_mdp
 from isaaclab.envs import mdp
 from isaaclab.managers import ObservationGroupCfg as ObsGroup
 from isaaclab.managers import ObservationTermCfg as ObsTerm
-from isaaclab.managers import RewardTermCfg, SceneEntityCfg
+from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.sensors import RayCasterCfg, patterns
 
@@ -35,22 +35,22 @@ class SpotVelocityRewardsCfg(SpotRewardsCfg):
 
         # KEEP and BOOST rewards that exist in both Go2 and Spot
         self.base_linear_velocity.weight = (
-            20.0  # Boosted from default 5.0 (equivalent to track_lin_vel_xy_exp)
+            5.0  # Boosted from default 5.0 (equivalent to track_lin_vel_xy_exp)
         )
         self.base_angular_velocity.weight = (
-            20.0  # Boosted from default 5.0 (equivalent to track_ang_vel_z_exp)
+            5.0  # Boosted from default 5.0 (equivalent to track_ang_vel_z_exp)
         )
         # Note: air_time (default 5.0) is equivalent to feet_air_time - keeping default
         # Note: joint_torques, joint_acc equivalent to dof_torques_l2, dof_acc_l2
         self.air_time.weight = (
-            10.0  # Boosted from default 5.0 (equivalent to track_air_time_exp)
+            5.0  # Boosted from default 5.0 (equivalent to track_air_time_exp)
         )
 
         # DISABLE Spot-specific rewards (not present in Go2)
         self.foot_clearance.weight = (
-            0.1  # Disabled from default 0.5 (Go2 doesn't have this)
+            0.25  # Disabled from default 0.5 (Go2 doesn't have this)
         )
-        self.gait.weight = 2.5  # Disabled from default 10.0 (Go2 doesn't have this)
+        self.gait.weight = 5.0  # Disabled from default 10.0 (Go2 doesn't have this)
         self.action_smoothness.weight = (
             -1.0e-2  # Disabled from default -1.0 (Go2 uses action_rate_l2 instead)
         )
@@ -82,10 +82,10 @@ class SpotVelocityRewardsCfg(SpotRewardsCfg):
         self.base_orientation.weight = (
             -1.0  # Disabled from default -3.0 (Go2 doesn't have this)
         )
-        self.survival_bonus = RewardTermCfg(
-            func=mdp.is_alive,
-            weight=1.0e-2,  # Constant bonus for staying alive
-        )
+        # self.survival_bonus = RewardTermCfg(
+        #     func=mdp.is_alive,
+        #     weight=1.0e-2,  # Constant bonus for staying alive
+        # )
 
 
 @configclass
@@ -106,6 +106,21 @@ class SpotTerminationsCfg:
         time_out=True,
     )
 
+@configclass
+class SpotCommandsCfg:
+    """Command specifications for the MDP."""
+
+    base_velocity = mdp.UniformVelocityCommandCfg(
+        asset_name="robot",
+        resampling_time_range=(5.0, 10.0),
+        rel_standing_envs=0.1,
+        rel_heading_envs=0.0,
+        heading_command=False,
+        debug_vis=True,
+        ranges=mdp.UniformVelocityCommandCfg.Ranges(
+            lin_vel_x=(-2.0, 3.0), lin_vel_y=(-1.5, 1.5), ang_vel_z=(-2.0, 2.0)
+        ),
+    )
 
 @configclass
 class SpotObservationsCfg:
@@ -166,15 +181,7 @@ class SpotVelocityRoughEnvCfg(SpotFlatEnvCfg):
     rewards: SpotRewardsCfg = SpotVelocityRewardsCfg()
     terminations: SpotTerminationsCfg = SpotTerminationsCfg()
     observations: SpotObservationsCfg = SpotObservationsCfg()
-
-    def __init__(self, include_height_scan: bool = False):
-        """Initialize environment configuration.
-
-        Args:
-            include_height_scan: Whether to include height scan observation. Defaults to False.
-        """
-        self.include_height_scan = include_height_scan
-        super().__init__()
+    commands: SpotCommandsCfg = SpotCommandsCfg()
 
     def __post_init__(self):
         # Initialize parent configuration first
@@ -194,11 +201,7 @@ class SpotVelocityRoughEnvCfg(SpotFlatEnvCfg):
         )
 
         # Update sensor period to match simulation
-        if (
-            hasattr(self.scene, "height_scanner")
-            and self.scene.height_scanner is not None
-        ):
-            self.scene.height_scanner.update_period = self.decimation * self.sim.dt
+        self.scene.height_scanner.update_period = self.decimation * self.sim.dt
 
         # Create our custom terrain mix for the pattern
         custom_terrain_cfg = ROUGH_TERRAINS_CFG.copy()

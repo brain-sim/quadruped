@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from torch.distributions.normal import Normal
-import torch.nn.functional as F
+
 
 class MLPPPOAgent(nn.Module):
     def __init__(
@@ -16,8 +16,6 @@ class MLPPPOAgent(nn.Module):
     ):
         super().__init__()
         self.noise_std_type = noise_std_type
-        print(f"noise_std_type: {noise_std_type}")
-        print(f"init_noise_std: {init_noise_std}")
         if noise_std_type == "scalar":
             self.actor_std = nn.Parameter(init_noise_std * torch.ones(n_act))
         elif noise_std_type == "log":
@@ -51,18 +49,16 @@ class MLPPPOAgent(nn.Module):
     def get_value(self, x):
         return self.critic(x)
 
-    def get_action_and_value(
-        self, obs, action: torch.Tensor = None, eval_mode: bool = False
-    ):
+    def get_action_and_value(self, obs, action=None, eval_mode=False):
         action_mean = self.actor(obs)
         action_std = self.actor_std.expand_as(action_mean)
         if self.noise_std_type == "log":
-            action_std = torch.clamp(action_std, -20.0, 5.0)
+            action_std = torch.clamp(action_std, -20.0, 2.0)
             action_std = torch.exp(action_std)
-        elif self.noise_std_type == "scalar":
-            action_std = F.softplus(action_std) + 1e-5
         dist = Normal(action_mean, action_std)
-        if not eval_mode and action is None:
+        if eval_mode:
+            action = action_mean
+        elif action is None:
             action = dist.sample()
         return (
             action,
@@ -70,3 +66,55 @@ class MLPPPOAgent(nn.Module):
             dist.entropy().sum(dim=-1),
             self.critic(obs),
         )
+
+    def get_action(self, obs):
+        action_mean = self.actor(obs)
+        return action_mean
+
+    def forward(self, obs):
+        return self.get_action(obs)
+
+
+# Load and convert your model
+def convert_checkpoint_to_jit(checkpoint_path, output_path):
+    # Initialize model
+    model = MLPPPOAgent(n_obs=48, n_act=12)
+
+    # Load checkpoint
+    checkpoint = torch.load(checkpoint_path, map_location="cpu")
+
+    # Load state dict (adjust key name as needed)
+    if "model_state_dict" in checkpoint:
+        model.load_state_dict(checkpoint["model_state_dict"])
+    elif "state_dict" in checkpoint:
+        model.load_state_dict(checkpoint["state_dict"])
+    else:
+        model.load_state_dict(checkpoint)  # Assume checkpoint is the state_dict
+
+    model.eval()
+
+    # Create example input (batch_size=1, obs_dim=48 for Spot)
+    example_input = torch.zeros(1, 48)
+
+    # Trace the model
+    with torch.no_grad():
+        traced_model = torch.jit.trace(model, example_input)
+
+    # Save the traced model
+    traced_model.save(output_path)
+    print(f"JIT model saved to {output_path}")
+
+    return traced_model
+
+
+# Usage
+if __name__ == "__main__":
+    traced_model = convert_checkpoint_to_jit(
+        "/home/user/quadruped/wandb/run-20250620_222202-th5nlcjt/files/checkpoints/ckpt_999751680.pt",
+        "/home/user/cognitiverl/source/cognitiverl/cognitiverl/tasks/direct/custom_assets/spot_rough_policy.pt",
+    )
+
+    # Test the traced model
+    test_input = torch.randn(1, 48)
+    output = traced_model(test_input)
+    print(f"Test output shape: {output.shape}")

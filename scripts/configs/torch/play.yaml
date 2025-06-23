@@ -1,4 +1,4 @@
-task: Spot-Velocity-Flat-Obstacle-Quadruped-v0
+task: Spot-Velocity-Rough-v0
 env_cfg_entry_point: env_cfg_entry_point
 num_envs: 64
 seed: 1
@@ -13,6 +13,6 @@ enable_cameras: true
 exp_name: play
 torch_deterministic: true
 device: cuda:0
-checkpoint_path: /home/user/cognitiverl/wandb/offline-run-20250602_194417-pnrq9ikt/files/checkpoints/ckpt_20480.pt
+checkpoint_path: /home/user/quadruped/wandb/run-20250623_190314-99vn24ox/files/checkpoints/ckpt_39321600.pt
 num_eval_envs: 10
 num_eval_env_steps: 50 

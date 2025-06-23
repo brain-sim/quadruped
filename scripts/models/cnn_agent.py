@@ -89,7 +89,7 @@ class CNNPPOAgent(nn.Module):
         return self.critic(img_feats)
 
     def get_action_and_value(
-        self, x: torch.Tensor, action: torch.Tensor = None
+        self, x: torch.Tensor, action: torch.Tensor = None, eval_mode: bool = False
     ) -> tuple:
         """Compute action, log-prob, entropy, and value for input states."""
         img_feats = self.extract_image(x)
@@ -98,13 +98,14 @@ class CNNPPOAgent(nn.Module):
         if self.noise_std_type == "log":
             action_std = torch.clamp(action_std, -20.0, 2.0)
             action_std = torch.exp(action_std)
+        elif self.noise_std_type == "scalar":
+            action_std = torch.clamp(action_std, 1e-6)
         dist = Normal(action_mean, action_std)
-
-        if action is None:
-            action = dist.rsample()
-
-        logprob = dist.log_prob(action).sum(dim=1)
-        entropy = dist.entropy().sum(dim=1)
-        value = self.critic(img_feats).view(-1)
-
-        return action, logprob, entropy, value
+        if not eval_mode and action is None:
+            action = dist.sample()
+        return (
+            action,
+            dist.log_prob(action).sum(dim=-1),
+            dist.entropy().sum(dim=-1),
+            self.critic(img_feats),
+        )

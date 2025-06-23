@@ -21,7 +21,6 @@ from isaaclab.utils import configclass
 from isaaclab.utils.dict import print_dict
 from models import CNNPPOAgent, MLPPPOAgent
 from utils import seed_everything
-
 # Import reward configuration for modification
 from quadruped.tasks.manager_based.quadruped.quadruped_env_cfg import (
     SpotVelocityRewardsCfg,
