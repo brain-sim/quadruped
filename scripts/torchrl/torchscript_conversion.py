@@ -114,7 +114,7 @@ if __name__ == "__main__":
     traced_model = convert_checkpoint_to_jit(
         n_obs,
         n_act,
-        "/home/chandramouli/quadruped/wandb/run-20250624_151353-mjm52kkb/files/checkpoints/ckpt_29491200.pt",
+        "/home/chandramouli/quadruped/wandb/run-20250624_161703-yq15s6c0/files/checkpoints/ckpt_58982400.pt",
         "/home/chandramouli/cognitiverl/source/cognitiverl/cognitiverl/tasks/direct/custom_assets/spot_policy_v5.pt",
     )
 
