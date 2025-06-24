@@ -11,7 +11,7 @@ class MLPPPOAgent(nn.Module):
         actor_hidden_dims=[512, 256, 128],
         critic_hidden_dims=[512, 256, 128],
         activation=nn.ELU,
-        noise_std_type="scalar",
+        noise_std_type="log",
         init_noise_std=1.0,
     ):
         super().__init__()
@@ -51,22 +51,26 @@ class MLPPPOAgent(nn.Module):
     def get_value(self, x):
         return self.critic(x)
 
+    def get_action(self, obs):
+        action_mean = self.actor(obs)
+        return action_mean
+    
     def get_action_and_value(
-        self, obs, action: torch.Tensor = None, eval_mode: bool = False
+        self, obs, action: torch.Tensor = None
     ):
         action_mean = self.actor(obs)
         action_std = self.actor_std.expand_as(action_mean)
         if self.noise_std_type == "log":
             action_std = torch.clamp(action_std, -20.0, 5.0)
             action_std = torch.exp(action_std)
-        elif self.noise_std_type == "scalar":
-            action_std = F.softplus(action_std) + 1e-5
         dist = Normal(action_mean, action_std)
-        if not eval_mode and action is None:
+        if action is None:
             action = dist.sample()
         return (
             action,
             dist.log_prob(action).sum(dim=-1),
             dist.entropy().sum(dim=-1),
             self.critic(obs),
+            action_mean,
+            action_std,
         )

@@ -13,6 +13,6 @@ enable_cameras: true
 exp_name: play
 torch_deterministic: true
 device: cuda:0
-checkpoint_path: /home/user/quadruped/wandb/run-20250623_190314-99vn24ox/files/checkpoints/ckpt_39321600.pt
+checkpoint_path: /home/chandramouli/quadruped/wandb/run-20250623_154954-rav784s7/files/checkpoints/ckpt_491520000.pt
 num_eval_envs: 10
 num_eval_env_steps: 50 

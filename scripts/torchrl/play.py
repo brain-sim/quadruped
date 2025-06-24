@@ -58,7 +58,7 @@ class ExperimentArgs:
     device: str = "cuda:0"
     """device to use for training"""
 
-    checkpoint_path: str = "/home/user/quadruped/wandb/run-20250623_190314-99vn24ox/files/checkpoints/ckpt_39321600.pt"
+    checkpoint_path: str = "/home/chandramouli/quadruped/wandb/run-20250623_154954-rav784s7/files/checkpoints/ckpt_491520000.pt"
     """path to the checkpoint to load"""
     num_eval_envs: int = 10
     """number of environments to run for evaluation/play."""

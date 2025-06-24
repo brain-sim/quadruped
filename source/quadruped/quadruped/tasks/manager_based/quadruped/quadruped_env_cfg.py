@@ -6,12 +6,10 @@
 
 # Import base Isaac Lab MDP functions
 import isaaclab.terrains as terrain_gen
-import isaaclab_tasks.manager_based.locomotion.velocity.mdp as velocity_mdp
 from isaaclab.envs import mdp
 from isaaclab.managers import ObservationGroupCfg as ObsGroup
 from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import SceneEntityCfg
-from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.sensors import RayCasterCfg, patterns
 
 # Replace the terrain configuration completely
@@ -19,73 +17,75 @@ from isaaclab.terrains.config.rough import ROUGH_TERRAINS_CFG
 from isaaclab.utils import configclass
 from isaaclab.utils.noise import AdditiveUniformNoiseCfg as Unoise
 from isaaclab_tasks.manager_based.locomotion.velocity.config.spot.flat_env_cfg import (  # noqa: F401, F403
+    SpotCommandsCfg,
     SpotFlatEnvCfg,
     SpotRewardsCfg,
 )
+from isaaclab.env
 
 from .mdp import *  # noqa: F401, F403
 
+__all__ = [
+    "SpotFlatEnvCfg",
+    "SpotVelocityRoughEnvCfg",
+]
 
-@configclass
-class SpotVelocityRewardsCfg(SpotRewardsCfg):
-    """Spot velocity tracking simplified to match Go2 approach with boosted values."""
+# @configclass
+# class SpotVelocityRewardsCfg(SpotRewardsCfg):
+#     """Spot velocity tracking simplified to match Go2 approach with boosted values."""
 
-    def __post_init__(self):
-        super().__post_init__()
+#     def __post_init__(self):
+#         super().__post_init__()
 
-        # KEEP and BOOST rewards that exist in both Go2 and Spot
-        self.base_linear_velocity.weight = (
-            5.0  # Boosted from default 5.0 (equivalent to track_lin_vel_xy_exp)
-        )
-        self.base_angular_velocity.weight = (
-            5.0  # Boosted from default 5.0 (equivalent to track_ang_vel_z_exp)
-        )
-        # Note: air_time (default 5.0) is equivalent to feet_air_time - keeping default
-        # Note: joint_torques, joint_acc equivalent to dof_torques_l2, dof_acc_l2
-        self.air_time.weight = (
-            5.0  # Boosted from default 5.0 (equivalent to track_air_time_exp)
-        )
+#         # KEEP and BOOST rewards that exist in both Go2 and Spot
+#         self.base_linear_velocity.weight = (
+#             5.0  # Boosted from default 5.0 (equivalent to track_lin_vel_xy_exp)
+#         )
+#         self.base_angular_velocity.weight = (
+#             5.0  # Boosted from default 5.0 (equivalent to track_ang_vel_z_exp)
+#         )
+#         # Note: air_time (default 5.0) is equivalent to feet_air_time - keeping default
+#         # Note: joint_torques, joint_acc equivalent to dof_torques_l2, dof_acc_l2
+#         self.air_time.weight = (
+#             5.0  # Boosted from default 5.0 (equivalent to track_air_time_exp)
+#         )
 
-        # DISABLE Spot-specific rewards (not present in Go2)
-        self.foot_clearance.weight = (
-            0.25  # Disabled from default 0.5 (Go2 doesn't have this)
-        )
-        self.gait.weight = 5.0  # Disabled from default 10.0 (Go2 doesn't have this)
-        self.action_smoothness.weight = (
-            -1.0e-2  # Disabled from default -1.0 (Go2 uses action_rate_l2 instead)
-        )
-        self.air_time_variance.weight = (
-            0.0  # Disabled from default -1.0 (Go2 doesn't have this)
-        )
-        self.foot_slip.weight = (
-            0.0  # Disabled from default -0.5 (Go2 doesn't have this)
-        )
-        self.joint_pos.weight = (
-            0.0  # Disabled from default -0.7 (Go2 doesn't have this)
-        )
-        self.joint_vel.weight = (
-            0.0  # Disabled from default -0.01 (Go2 doesn't have this)
-        )
+#         # DISABLE Spot-specific rewards (not present in Go2)
+#         self.foot_clearance.weight = (
+#             0.5  # Disabled from default 0.5 (Go2 doesn't have this)
+#         )
+#         self.gait.weight = 10.0  # Disabled from default 10.0 (Go2 doesn't have this)
+#         self.action_smoothness.weight = (
+#             -1.0  # Disabled from default -1.0 (Go2 uses action_rate_l2 instead)
+#         )
+#         self.air_time_variance.weight = (
+#             -1.0  # Disabled from default -1.0 (Go2 doesn't have this)
+#         )
+#         self.foot_slip.weight = (
+#             -0.5  # Disabled from default -0.5 (Go2 doesn't have this)
+#         )
+#         self.joint_pos.weight = (
+#             -0.7  # Disabled from default -0.7 (Go2 doesn't have this)
+#         )
+#         self.joint_vel.weight = (
+#             0.01  # Disabled from default -0.01 (Go2 doesn't have this)
+#         )
 
-        # Keep the joint penalties that exist in both (with your modified values)
-        self.joint_torques.weight = (
-            -5.0e-4  # Reduced from default -5.0e-4 (equivalent to dof_torques_l2)
-        )
-        self.joint_acc.weight = (
-            -1.0e-4  # Same as default -1.0e-4 (equivalent to dof_acc_l2)
-        )
-        # Note: air_time weight=5.0 (keeping default, equivalent to feet_air_time)
+#         # Keep the joint penalties that exist in both (with your modified values)
+#         self.joint_torques.weight = (
+#             -5.0e-4  # Reduced from default -5.0e-4 (equivalent to dof_torques_l2)
+#         )
+#         self.joint_acc.weight = (
+#             -1.0e-4  # Same as default -1.0e-4 (equivalent to dof_acc_l2)
+#         )
+#         # Note: air_time weight=5.0 (keeping default, equivalent to feet_air_time)
 
-        self.base_motion.weight = (
-            -2.0
-        )  # Disabled from default -2.0 (Go2 uses separate lin_vel_z_l2, ang_vel_xy_l2)
-        self.base_orientation.weight = (
-            -1.0  # Disabled from default -3.0 (Go2 doesn't have this)
-        )
-        # self.survival_bonus = RewardTermCfg(
-        #     func=mdp.is_alive,
-        #     weight=1.0e-2,  # Constant bonus for staying alive
-        # )
+#         self.base_motion.weight = (
+#             -2.0
+#         )  # Disabled from default -2.0 (Go2 uses separate lin_vel_z_l2, ang_vel_xy_l2)
+#         self.base_orientation.weight = (
+#             -3.0  # Disabled from default -3.0 (Go2 doesn't have this)
+#         )
 
 
 @configclass
@@ -106,21 +106,6 @@ class SpotTerminationsCfg:
         time_out=True,
     )
 
-@configclass
-class SpotCommandsCfg:
-    """Command specifications for the MDP."""
-
-    base_velocity = mdp.UniformVelocityCommandCfg(
-        asset_name="robot",
-        resampling_time_range=(5.0, 10.0),
-        rel_standing_envs=0.1,
-        rel_heading_envs=0.0,
-        heading_command=False,
-        debug_vis=True,
-        ranges=mdp.UniformVelocityCommandCfg.Ranges(
-            lin_vel_x=(-2.0, 3.0), lin_vel_y=(-1.5, 1.5), ang_vel_z=(-2.0, 2.0)
-        ),
-    )
 
 @configclass
 class SpotObservationsCfg:
@@ -167,7 +152,7 @@ class SpotObservationsCfg:
         )
 
         def __post_init__(self):
-            self.enable_corruption = False
+            self.enable_corruption = True
             self.concatenate_terms = True
 
     # observation groups
@@ -178,10 +163,9 @@ class SpotObservationsCfg:
 class SpotVelocityRoughEnvCfg(SpotFlatEnvCfg):
     """Spot velocity tracking with custom terrain pattern and center spawning."""
 
-    rewards: SpotRewardsCfg = SpotVelocityRewardsCfg()
+    # rewards: SpotRewardsCfg = SpotVelocityRewardsCfg()
     terminations: SpotTerminationsCfg = SpotTerminationsCfg()
     observations: SpotObservationsCfg = SpotObservationsCfg()
-    commands: SpotCommandsCfg = SpotCommandsCfg()
 
     def __post_init__(self):
         # Initialize parent configuration first

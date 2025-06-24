@@ -87,9 +87,14 @@ class CNNPPOAgent(nn.Module):
         """Compute state-value from raw input."""
         img_feats = self.extract_image(x)
         return self.critic(img_feats)
+    
+    def get_action(self, x: torch.Tensor) -> torch.Tensor:
+        """Compute action from raw input."""
+        img_feats = self.extract_image(x)
+        return self.actor(img_feats)
 
     def get_action_and_value(
-        self, x: torch.Tensor, action: torch.Tensor = None, eval_mode: bool = False
+        self, x: torch.Tensor, action: torch.Tensor = None
     ) -> tuple:
         """Compute action, log-prob, entropy, and value for input states."""
         img_feats = self.extract_image(x)
@@ -101,11 +106,13 @@ class CNNPPOAgent(nn.Module):
         elif self.noise_std_type == "scalar":
             action_std = torch.clamp(action_std, 1e-6)
         dist = Normal(action_mean, action_std)
-        if not eval_mode and action is None:
+        if action is None:
             action = dist.sample()
         return (
             action,
             dist.log_prob(action).sum(dim=-1),
             dist.entropy().sum(dim=-1),
             self.critic(img_feats),
+            action_mean,
+            action_std,
         )

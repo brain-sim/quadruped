@@ -76,9 +76,9 @@ class MLPPPOAgent(nn.Module):
 
 
 # Load and convert your model
-def convert_checkpoint_to_jit(checkpoint_path, output_path):
+def convert_checkpoint_to_jit(n_obs, n_act, checkpoint_path, output_path):
     # Initialize model
-    model = MLPPPOAgent(n_obs=48, n_act=12)
+    model = MLPPPOAgent(n_obs=n_obs, n_act=n_act)
 
     # Load checkpoint
     checkpoint = torch.load(checkpoint_path, map_location="cpu")
@@ -94,7 +94,7 @@ def convert_checkpoint_to_jit(checkpoint_path, output_path):
     model.eval()
 
     # Create example input (batch_size=1, obs_dim=48 for Spot)
-    example_input = torch.zeros(1, 48)
+    example_input = torch.randn(1, n_obs)
 
     # Trace the model
     with torch.no_grad():
@@ -109,12 +109,18 @@ def convert_checkpoint_to_jit(checkpoint_path, output_path):
 
 # Usage
 if __name__ == "__main__":
+    n_obs = 48
+    n_act = 12
     traced_model = convert_checkpoint_to_jit(
-        "/home/user/quadruped/wandb/run-20250620_222202-th5nlcjt/files/checkpoints/ckpt_999751680.pt",
-        "/home/user/cognitiverl/source/cognitiverl/cognitiverl/tasks/direct/custom_assets/spot_rough_policy.pt",
+        n_obs,
+        n_act,
+        "/home/chandramouli/quadruped/wandb/run-20250624_151353-mjm52kkb/files/checkpoints/ckpt_29491200.pt",
+        "/home/chandramouli/cognitiverl/source/cognitiverl/cognitiverl/tasks/direct/custom_assets/spot_policy_v5.pt",
     )
 
     # Test the traced model
-    test_input = torch.randn(1, 48)
+    test_input = torch.zeros(1, n_obs)
+    test_input[:, 8] = -1.0
     output = traced_model(test_input)
+    print(output)
     print(f"Test output shape: {output.shape}")
