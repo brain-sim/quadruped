@@ -499,19 +499,19 @@ def main(args):
                 ratio = logratio.exp()
 
                 with torch.inference_mode():
-                    # calculate approx_kl http://joschu.net/blog/kl-approx.html
-                    kl_mean = torch.mean(
-                        torch.sum(
-                            torch.log(newsigma / b_sigmas[mb_inds] + 1.0e-5)
-                            + (
-                                torch.square(b_sigmas[mb_inds])
-                                + torch.square(b_mus[mb_inds] - newmu)
-                            )
-                            / (2 * torch.square(newsigma))
-                            - 0.5,
-                            dim=-1,
-                        )
-                    )
+                    # kl_mean = torch.mean(
+                    #     torch.sum(
+                    #         torch.log(newsigma / b_sigmas[mb_inds] + 1.0e-5)
+                    #         + (
+                    #             torch.square(b_sigmas[mb_inds])
+                    #             + torch.square(b_mus[mb_inds] - newmu)
+                    #         )
+                    #         / (2 * torch.square(newsigma))
+                    #         - 0.5,
+                    #         dim=-1,
+                    #     )
+                    # )
+                    kl_mean = ((ratio - 1) - logratio).mean()
                     clipfracs += [
                         ((ratio - 1.0).abs() > args.clip_coef).float().mean().item()
                     ]
