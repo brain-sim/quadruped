@@ -6,10 +6,12 @@
 
 # Import base Isaac Lab MDP functions
 import isaaclab.terrains as terrain_gen
-from isaaclab.envs import mdp
+import isaaclab_tasks.manager_based.locomotion.velocity.mdp as velocity_mdp
+from isaaclab.envs import ManagerBasedEnv, mdp
 from isaaclab.managers import ObservationGroupCfg as ObsGroup
 from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import SceneEntityCfg
+from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.sensors import RayCasterCfg, patterns
 
 # Replace the terrain configuration completely
@@ -21,7 +23,6 @@ from isaaclab_tasks.manager_based.locomotion.velocity.config.spot.flat_env_cfg i
     SpotFlatEnvCfg,
     SpotRewardsCfg,
 )
-from isaaclab.env
 
 from .mdp import *  # noqa: F401, F403
 
@@ -88,6 +89,21 @@ __all__ = [
 #         )
 
 
+def height_scan(
+    env: ManagerBasedEnv, sensor_cfg: SceneEntityCfg, offset: float = 0.5
+) -> torch.Tensor:
+    """Height scan from the given sensor w.r.t. the sensor's frame.
+
+    The provided offset (Defaults to 0.5) is subtracted from the returned values.
+    """
+    # extract the used quantities (to enable type-hinting)
+    sensor: RayCaster = env.scene.sensors[sensor_cfg.name]
+    # height scan: height = sensor_height - hit_point_z - offset
+    return (
+        sensor.data.pos_w[:, 2].unsqueeze(1) - sensor.data.ray_hits_w[..., 2] - offset
+    )
+
+
 @configclass
 class SpotTerminationsCfg:
     """Termination terms for the MDP."""
@@ -146,7 +162,7 @@ class SpotObservationsCfg:
         )
         actions = ObsTerm(func=mdp.last_action)
         height_scan = ObsTerm(
-            func=mdp.height_scan,
+            func=custom_height_scan,
             params={"sensor_cfg": SceneEntityCfg("height_scanner"), "offset": 0.0},
             noise=Unoise(n_min=-0.1, n_max=0.1),
         )

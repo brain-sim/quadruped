@@ -450,8 +450,6 @@ def main(args):
 
                 # Update step progress bar
                 step_pbar.update(1)
-            step_speed = (args.num_steps * args.num_envs) / (time.time() - start_time)
-            step_pbar.set_description(f"speed (sps) : {step_speed:3.1f}, " + desc)
 
             # bootstrap value if not done
             next_value = agent.get_value(next_obs).reshape(1, -1)
@@ -472,7 +470,9 @@ def main(args):
                 )
                 returns[t] = advantage + values[t]
             advantages = returns - values
-
+            step_speed = (args.num_steps * args.num_envs) / (time.time() - start_time)
+            
+        start_time = time.time()
         # flatten the batch
         b_obs = obs.reshape((-1,) + envs.observation_space["policy"].shape[1:])
         b_logprobs = logprobs.reshape(-1)
@@ -557,7 +557,8 @@ def main(args):
                 new_lr = update_learning_rate_adaptive(
                     optimizer, kl_mean.item(), args.target_kl, args.lr_multiplier
                 )
-
+        learn_speed = time.time() - start_time
+        step_pbar.set_description(f"speed (sps) : {step_speed:3.1f}, time to update (s) : {learn_speed:3.1f}")
         # Log the learning rate change
         if global_step_burnin is not None and iteration % args.log_interval == 0:
             wandb.log(

@@ -11,7 +11,7 @@ class MLPPPOAgent(nn.Module):
         actor_hidden_dims=[512, 256, 128],
         critic_hidden_dims=[512, 256, 128],
         activation=nn.ELU,
-        noise_std_type="log",
+        noise_std_type="scalar",
         init_noise_std=1.0,
     ):
         super().__init__()
@@ -56,7 +56,7 @@ class MLPPPOAgent(nn.Module):
         return action_mean
     
     def get_action_and_value(
-        self, obs, action: torch.Tensor = None
+        self, obs, action: torch.Tensor | None = None
     ):
         action_mean = self.actor(obs)
         action_std = self.actor_std.expand_as(action_mean)
@@ -74,3 +74,6 @@ class MLPPPOAgent(nn.Module):
             action_mean,
             action_std,
         )
+    
+    def forward(self, obs):
+        return self.get_action(obs)

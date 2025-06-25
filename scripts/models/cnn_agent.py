@@ -94,7 +94,7 @@ class CNNPPOAgent(nn.Module):
         return self.actor(img_feats)
 
     def get_action_and_value(
-        self, x: torch.Tensor, action: torch.Tensor = None
+        self, x: torch.Tensor, action: torch.Tensor | None = None
     ) -> tuple:
         """Compute action, log-prob, entropy, and value for input states."""
         img_feats = self.extract_image(x)
@@ -116,3 +116,6 @@ class CNNPPOAgent(nn.Module):
             action_mean,
             action_std,
         )
+
+    def forward(self, obs):
+        return self.get_action(obs)
