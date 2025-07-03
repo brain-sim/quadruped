@@ -17,7 +17,6 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from isaaclab.utils import configclass
 from models import CNNPPOAgent, MLPPPOAgent
 from utils import load_args, print_dict, seed_everything, update_learning_rate_adaptive
-from wrappers import IsaacLabVecEnvWrapper
 
 
 @configclass
@@ -192,6 +191,9 @@ def make_isaaclab_env(
 ):
     import isaaclab_tasks  # noqa: F401
     from isaaclab_tasks.utils.parse_cfg import parse_env_cfg
+
+    # NOW IMPORT AFTER SimulationApp is initialized
+    from wrappers import IsaacLabVecEnvWrapper
 
     import quadruped.tasks  # noqa: F401
 

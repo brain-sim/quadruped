@@ -89,7 +89,7 @@ class IsaacLabVecEnvWrapper(Wrapper):
 
     def __init__(
         self,
-        env: ManagerBasedRLEnv | DirectRLEnv,
+        env,
         clip_actions: float | None = None,
         use_jax: bool | False = False,
     ):
