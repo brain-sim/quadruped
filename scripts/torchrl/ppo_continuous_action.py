@@ -15,9 +15,9 @@ import wandb
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from isaaclab.utils import configclass
-from isaaclab.utils.dict import print_dict
 from models import CNNPPOAgent, MLPPPOAgent
-from utils import load_args, seed_everything, update_learning_rate_adaptive
+from utils import load_args, print_dict, seed_everything, update_learning_rate_adaptive
+from wrappers import IsaacLabVecEnvWrapper
 
 
 @configclass
@@ -60,7 +60,7 @@ class ExperimentArgs:
     # Algorithm specific arguments
 
     """the id of the environment"""
-    total_timesteps: int = 10_000_000
+    total_timesteps: int = 2_000_000_000
     """total timesteps of the experiments"""
     learning_rate: float = 0.001
     """the learning rate of the optimizer"""
@@ -104,7 +104,7 @@ class ExperimentArgs:
     # Agent config
     agent_type: str = "MLPPPOAgent"
 
-    checkpoint_interval: int = 10
+    checkpoint_interval: int = total_timesteps
     """environment steps between saving checkpoints."""
     # play_interval: int = 3
     # """environment steps between playing evaluation episodes during training."""
@@ -191,10 +191,6 @@ def make_isaaclab_env(
     **kwargs,
 ):
     import isaaclab_tasks  # noqa: F401
-    from isaaclab_rl.torchrl import (
-        IsaacLabRecordEpisodeStatistics,
-        IsaacLabVecEnvWrapper,
-    )
     from isaaclab_tasks.utils.parse_cfg import parse_env_cfg
 
     import quadruped.tasks  # noqa: F401
@@ -211,8 +207,12 @@ def make_isaaclab_env(
             else None,
             max_total_steps=max_total_steps,
         )
-        print_dict({"max_episode_steps": env.unwrapped.max_episode_length}, nesting=4)
-        env = IsaacLabRecordEpisodeStatistics(env)
+        print_dict(
+            {"max_episode_steps": env.unwrapped.max_episode_length},
+            nesting=4,
+            color="green",
+            attrs=["bold"],
+        )
         env = IsaacLabVecEnvWrapper(
             env
         )  # was earlier set to clip_actions=1.0 causing issues.
@@ -232,7 +232,7 @@ def make_isaaclab_env(
 
 
 def main(args):
-    print_dict(args, nesting=4)
+    print_dict(args, nesting=4, color="green", attrs=["bold"])
     run_name = f"{args.task}__{args.exp_name}__{args.seed}"
 
     args.batch_size = int(args.num_envs * args.num_steps)
@@ -296,10 +296,10 @@ def main(args):
         device
     )
     actions = torch.zeros((args.num_steps,) + envs.action_space.shape).to(device)
-    logprobs = torch.zeros((args.num_steps, args.num_envs)).to(device)
-    rewards = torch.zeros((args.num_steps, args.num_envs)).to(device)
-    dones = torch.zeros((args.num_steps, args.num_envs)).to(device)
-    values = torch.zeros((args.num_steps, args.num_envs)).to(device)
+    logprobs = torch.zeros((args.num_steps, args.num_envs, 1)).to(device)
+    rewards = torch.zeros((args.num_steps, args.num_envs, 1)).to(device)
+    dones = torch.zeros((args.num_steps, args.num_envs, 1)).to(device).byte()
+    values = torch.zeros((args.num_steps, args.num_envs, 1)).to(device)
     mus = torch.zeros_like(actions)
     sigmas = torch.zeros_like(actions)
     # TRY NOT TO MODIFY: start the game
@@ -314,15 +314,7 @@ def main(args):
             high=int(envs.unwrapped.max_episode_length),
         )
 
-    max_ep_ret = -float("inf")
-    max_ep_reward = -float("inf")
-    success_rates, avg_reward_per_step, avg_returns, max_ep_length, goals_reached = (
-        [],
-        [],
-        [],
-        [],
-        [],
-    )
+    avg_returns = 0.0
 
     # Create two static progress bars
     iteration_pbar = tqdm.tqdm(
@@ -363,17 +355,17 @@ def main(args):
             start_time = time.time()
             for step in range(0, args.num_steps):
                 global_step += args.num_envs
-                obs[step] = next_obs
+                obs[step].copy_(next_obs)
 
                 # ALGO LOGIC: action logic
                 action, logprob, _, value, mu, sigma = agent.get_action_and_value(
                     next_obs
                 )
-                values[step] = value.flatten()
-                actions[step] = action
-                logprobs[step] = logprob
-                mus[step] = mu
-                sigmas[step] = sigma
+                values[step].copy_(value.detach().view(-1, 1))
+                actions[step].copy_(action.detach())
+                logprobs[step].copy_(logprob.detach().view(-1, 1))
+                mus[step].copy_(mu.detach())
+                sigmas[step].copy_(sigma.detach())
 
                 # TRY NOT TO MODIFY BEGIN: execute the game and log data.
                 try:
@@ -381,13 +373,16 @@ def main(args):
                 except Exception:
                     action = action.nan_to_num(nan=0.0, posinf=0.0, neginf=0.0)
                     next_obs, reward, next_done, infos = envs.step(action)
+
+                rewards[step].copy_(reward.clone().view(-1, 1))
                 # Bootstrapping on time outs
                 if "time_outs" in infos:
-                    reward += args.gamma * torch.squeeze(
-                        value * infos["time_outs"].unsqueeze(1).to(device), 1
+                    rewards[step] += (
+                        args.gamma
+                        * value.detach()
+                        * infos["time_outs"].unsqueeze(1).to(device)
                     )
-                rewards[step] = reward.view(-1)
-                dones[step] = next_done
+                dones[step].copy_(next_done.view(-1, 1))
                 # TRY NOT TO MODIFY END:
 
                 # Capture detailed logging information
@@ -434,12 +429,6 @@ def main(args):
                         max_ep_reward = max(max_ep_reward, r)
                         avg_reward_per_step.append(r)
 
-                if "success_rate" in infos:
-                    success_rates.append(infos["success_rate"])
-                if "max_episode_length" in infos:
-                    max_ep_length.append(infos["max_episode_length"])
-                if "goals_reached" in infos:
-                    goals_reached.append(infos["goals_reached"])
                 if args.log_video:
                     frame = next_obs[indices, : 3 * 32 * 32].reshape(-1, 3, 32, 32)
                     frame = (
@@ -452,40 +441,44 @@ def main(args):
                 step_pbar.update(1)
 
             # bootstrap value if not done
-            next_value = agent.get_value(next_obs).reshape(1, -1)
+            next_value = agent.get_value(next_obs).detach()
             returns = torch.zeros_like(rewards).to(device)
+            advantages = torch.zeros_like(rewards).to(device)
 
             advantage = 0
             for t in reversed(range(args.num_steps)):
                 if t == args.num_steps - 1:
-                    nextvalues = next_value
+                    nextvalues = next_value  # [num_envs, 1]
                 else:
-                    nextvalues = values[t + 1]
-                nextnonterminal = 1.0 - dones[t]
+                    nextvalues = values[t + 1]  # [num_envs, 1]
+                nextnonterminal = 1.0 - dones[t]  # [num_envs, 1]
                 delta = (
                     rewards[t] + args.gamma * nextvalues * nextnonterminal - values[t]
-                )
+                )  # [num_envs, 1]
                 advantage = (
                     delta + args.gamma * args.gae_lambda * nextnonterminal * advantage
-                )
+                )  # [num_envs, 1]
                 returns[t] = advantage + values[t]
             advantages = returns - values
+            if not args.norm_adv:
+                advantages = (advantages - advantages.mean()) / (
+                    advantages.std() + 1e-8
+                )
             step_speed = (args.num_steps * args.num_envs) / (time.time() - start_time)
-            
+
         start_time = time.time()
         # flatten the batch
-        b_obs = obs.reshape((-1,) + envs.observation_space["policy"].shape[1:])
-        b_logprobs = logprobs.reshape(-1)
-        b_actions = actions.reshape((-1,) + envs.action_space.shape[1:])
-        b_advantages = advantages.reshape(-1)
-        b_returns = returns.reshape(-1)
-        b_values = values.reshape(-1)
-        b_mus = mus.reshape((-1,) + envs.action_space.shape[1:])
-        b_sigmas = sigmas.reshape((-1,) + envs.action_space.shape[1:])
+        b_obs = obs.flatten(0, 1)
+        b_logprobs = logprobs.flatten(0, 1)
+        b_actions = actions.flatten(0, 1)
+        b_advantages = advantages.flatten(0, 1)
+        b_returns = returns.flatten(0, 1)
+        b_values = values.flatten(0, 1)
+        b_mus = mus.flatten(0, 1)
+        b_sigmas = sigmas.flatten(0, 1)
 
         # Optimizing the policy and value network
         b_inds = np.arange(args.batch_size)
-        clipfracs = []
         for epoch in range(args.update_epochs):
             np.random.shuffle(b_inds)
             for start in range(0, args.batch_size, args.minibatch_size):
@@ -495,25 +488,20 @@ def main(args):
                 _, newlogprob, entropy, newvalue, newmu, newsigma = (
                     agent.get_action_and_value(b_obs[mb_inds], b_actions[mb_inds])
                 )
-                logratio = newlogprob - b_logprobs[mb_inds]
-                ratio = logratio.exp()
+                ratio = torch.exp(newlogprob - torch.squeeze(b_logprobs[mb_inds]))
 
                 with torch.inference_mode():
-                    kl_mean = torch.mean(
-                        torch.sum(
-                            torch.log(newsigma / b_sigmas[mb_inds] + 1.0e-5)
-                            + (
-                                torch.square(b_sigmas[mb_inds])
-                                + torch.square(b_mus[mb_inds] - newmu)
-                            )
-                            / (2 * torch.square(newsigma))
-                            - 0.5,
-                            dim=-1,
+                    kl = torch.sum(
+                        torch.log(newsigma / b_sigmas[mb_inds] + 1.0e-5)
+                        + (
+                            torch.square(b_sigmas[mb_inds])
+                            + torch.square(b_mus[mb_inds] - newmu)
                         )
+                        / (2 * torch.square(newsigma))
+                        - 0.5,
+                        dim=-1,
                     )
-                    clipfracs += [
-                        ((ratio - 1.0).abs() > args.clip_coef).float().mean().item()
-                    ]
+                    kl_mean = torch.mean(kl)
 
                 mb_advantages = b_advantages[mb_inds]
                 if args.norm_adv:
@@ -522,26 +510,24 @@ def main(args):
                     )
 
                 # Policy loss
-                pg_loss1 = -mb_advantages * ratio
-                pg_loss2 = -mb_advantages * torch.clamp(
+                pg_loss1 = -torch.squeeze(mb_advantages) * ratio
+                pg_loss2 = -torch.squeeze(mb_advantages) * torch.clamp(
                     ratio, 1 - args.clip_coef, 1 + args.clip_coef
                 )
                 pg_loss = torch.max(pg_loss1, pg_loss2).mean()
 
                 # Value loss
-                newvalue = newvalue.view(-1)
                 if args.clip_vloss:
-                    v_loss_unclipped = (newvalue - b_returns[mb_inds]) ** 2
                     v_clipped = b_values[mb_inds] + torch.clamp(
                         newvalue - b_values[mb_inds],
                         -args.clip_coef,
                         args.clip_coef,
                     )
-                    v_loss_clipped = (v_clipped - b_returns[mb_inds]) ** 2
-                    v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
-                    v_loss = v_loss_max.mean()
+                    v_loss_unclipped = (newvalue - b_returns[mb_inds]).pow(2)
+                    v_loss_clipped = (v_clipped - b_returns[mb_inds]).pow(2)
+                    v_loss = torch.max(v_loss_unclipped, v_loss_clipped).mean()
                 else:
-                    v_loss = ((newvalue - b_returns[mb_inds]) ** 2).mean()
+                    v_loss = (b_returns[mb_inds] - newvalue).pow(2).mean()
 
                 entropy_loss = entropy.mean()
                 loss = pg_loss - args.ent_coef * entropy_loss + v_loss * args.vf_coef
@@ -554,11 +540,13 @@ def main(args):
                 optimizer.step()
 
             if args.target_kl is not None and args.adaptive_lr:
-                new_lr = update_learning_rate_adaptive(
+                update_learning_rate_adaptive(
                     optimizer, kl_mean.item(), args.target_kl, args.lr_multiplier
                 )
         learn_speed = time.time() - start_time
-        step_pbar.set_description(f"speed (sps) : {step_speed:3.1f}, time to update (s) : {learn_speed:3.1f}")
+        step_pbar.set_description(
+            f"speed (sps) : {step_speed:3.1f}, time to update (s) : {learn_speed:3.1f}"
+        )
         # Log the learning rate change
         if global_step_burnin is not None and iteration % args.log_interval == 0:
             wandb.log(
@@ -615,41 +603,13 @@ def main(args):
                         logs[f"terminations/{termination_name}"] = (
                             torch.tensor(termination_values).float().mean()
                         )
+                avg_returns = rewards.mean().item()
                 # Clear all buffers for next interval
                 reward_info_buffer.clear()
                 metric_info_buffer.clear()
                 curriculum_info_buffer.clear()
                 termination_info_buffer.clear()
 
-                if len(avg_returns) > 0:
-                    logs["avg_episode_return"] = torch.tensor(avg_returns).mean()
-                    logs["max_episode_return"] = max_ep_ret
-                    desc += f"ep_ret : avg={torch.tensor(avg_returns).mean():.2f}, max={max_ep_ret:.2f}, "
-                if len(avg_reward_per_step) > 0:
-                    logs["avg_step_reward"] = torch.tensor(avg_reward_per_step).mean()
-                    logs["max_step_reward"] = (
-                        torch.tensor(avg_reward_per_step).max().item()
-                    )
-                    desc += f"rew_per_step : avg={torch.tensor(avg_reward_per_step).mean():.2f}, max={max_ep_reward:.2f}"
-                if len(success_rates) > 0:
-                    logs["success_rate"] = torch.tensor(success_rates).mean()
-                if len(max_ep_length) > 0:
-                    logs["max_episode_length"] = torch.tensor(max_ep_length).mean()
-                if len(goals_reached) > 0:
-                    logs["goals_reached"] = torch.tensor(goals_reached).mean()
-                (
-                    success_rates,
-                    avg_reward_per_step,
-                    avg_returns,
-                    max_ep_length,
-                    goals_reached,
-                ) = (
-                    [],
-                    [],
-                    [],
-                    [],
-                    [],
-                )
             iteration_pbar.set_description(desc)
             wandb.log(
                 {
@@ -688,6 +648,7 @@ def main(args):
                 best_step = global_step
                 best_ckpt = ckpt_path
 
+        avg_returns = 0.0
         # Update iteration progress bar
         iteration_pbar.update(1)
 

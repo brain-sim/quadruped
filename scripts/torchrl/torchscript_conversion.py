@@ -114,8 +114,8 @@ if __name__ == "__main__":
     traced_model = convert_checkpoint_to_jit(
         n_obs,
         n_act,
-        "/home/chandramouli/quadruped/wandb/run-20250624_221523-0oi0mamx/files/checkpoints/ckpt_265420800.pt",
-        "/home/chandramouli/cognitiverl/source/cognitiverl/cognitiverl/tasks/direct/custom_assets/spot_policy_v5.pt",
+        "/home/chandramouli/quadruped/wandb/run-20250702_135541-hp4ft4r4/files/checkpoints/ckpt_983040000.pt",
+        "/home/chandramouli/cognitiverl/source/cognitiverl/cognitiverl/tasks/direct/custom_assets/spot_policy_test_v2.pt",
     )
     # Test the traced model
     test_input = torch.zeros(1, n_obs)

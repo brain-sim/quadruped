@@ -63,3 +63,4 @@ _build
 
 # Teleop Recorded Dataset
 datasets
+**/*pyrightconfig.json
