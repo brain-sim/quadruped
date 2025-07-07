@@ -14,58 +14,12 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from isaaclab.utils import configclass
 from models import CNNPPOAgent, MLPPPOAgent
 from utils import load_args, print_dict  # add load_args import
-
+from hyperparams import EnvArgs, ExperimentPlayArgs
 ### TODO : Make play callable while training and after training.
 ### Solution - Use ManagerBasedRL or multi threading or multiprocessing to run train and eval.
 
 ### TODO : get the name of the video file from the environment.
 ### Solution - Use the environment's metadata to get the name of the video file (do it elegantly).
-
-
-@configclass
-class EnvArgs:
-    task: str = "Spot-Velocity-Flat-v0"
-    """the id of the environment"""
-    env_cfg_entry_point: str = "env_cfg_entry_point"
-    """the entry point of the environment configuration"""
-    num_envs: int = 4096
-    """the number of parallel environments to simulate"""
-    seed: int = 1
-    """seed of the environment"""
-    capture_video: bool = True
-    """whether to capture videos of the agent performances (check out `videos` folder)"""
-    video: bool = False
-    """record videos during training"""
-    video_length: int = 200
-    """length of the recorded video (in steps)"""
-    video_interval: int = 2000
-    """interval between video recordings (in steps)"""
-    disable_fabric: bool = False
-    """disable fabric and use USD I/O operations"""
-    distributed: bool = False
-    """run training with multiple GPUs or nodes"""
-    headless: bool = False
-    """run training in headless mode"""
-    enable_cameras: bool = False
-    """enable cameras to record sensor inputs."""
-
-
-@configclass
-class ExperimentArgs:
-    exp_name: str = os.path.basename(__file__)[: -len(".py")]
-    """the name of this experiment"""
-    torch_deterministic: bool = True
-    """if toggled, `torch.backends.cudnn.deterministic=False`"""
-    device: str = "cuda:0"
-    """device to use for training"""
-
-    checkpoint_path: str = "/home/chandramouli/quadruped/wandb/run-20250701_143749-04yfv2oo/files/checkpoints/ckpt_1179648000.pt"
-    """path to the checkpoint to load"""
-    num_eval_envs: int = 32
-    """number of environments to run for evaluation/play."""
-    num_eval_env_steps: int = 1000
-    """number of steps to run for evaluation/play."""
-    agent: str = "MLPPPOAgent"
 
 
 @configclass
@@ -106,10 +60,8 @@ def make_isaaclab_env(
     **kwargs,
 ):
     import isaaclab_tasks  # noqa: F401
-    from isaaclab_rl.torchrl import (
-        IsaacLabVecEnvWrapper,
-    )
     from isaaclab_tasks.utils.parse_cfg import parse_env_cfg
+    from wrappers import IsaacLabVecEnvWrapper
 
     import quadruped.tasks  # noqa: F401
 
@@ -174,7 +126,7 @@ def main(args):
     }
     print("Here")
 
-    agent_class = AGENT_LOOKUP[args.agent]
+    agent_class = AGENT_LOOKUP[args.agent_type]
     agent = agent_class(n_obs, n_act)
     print(
         colored(

@@ -1,79 +1,332 @@
 import torch
 import torch.nn as nn
-from torch.distributions.normal import Normal
 import torch.nn.functional as F
+from torch.distributions.normal import Normal
 
-class MLPPPOAgent(nn.Module):
+from .base_agent import BaseAgent
+
+
+class MLPPPOAgent(BaseAgent):
+    """
+    MLP PPO Agent.
+    """
+
     def __init__(
         self,
-        n_obs,
-        n_act,
-        actor_hidden_dims=[512, 256, 128],
-        critic_hidden_dims=[512, 256, 128],
-        activation=nn.ELU,
-        noise_std_type="scalar",
-        init_noise_std=1.0,
+        n_obs: int,
+        n_act: int,
+        actor_hidden_dims: list[int] = [512, 256, 128],
+        critic_hidden_dims: list[int] = [512, 256, 128],
+        activation: type[nn.Module] = nn.ELU,
+        noise_std_type: str = "scalar",
+        init_noise_std: float = 1.0,
+        device: str = "cuda:0",
+        dtype: torch.dtype = torch.float32,
     ):
-        super().__init__()
+        super().__init__(device=device, dtype=dtype)
+
+        self.n_obs = n_obs
+        self.n_act = n_act
         self.noise_std_type = noise_std_type
-        print(f"noise_std_type: {noise_std_type}")
-        print(f"init_noise_std: {init_noise_std}")
+
+        # Build networks using base class method
+        self.actor = self.build_networks(
+            input_dim=n_obs,
+            output_dim=n_act,
+            hidden_dims=actor_hidden_dims,
+            activation=activation,
+        )
+
+        self.critic = self.build_networks(
+            input_dim=n_obs,
+            output_dim=1,
+            hidden_dims=critic_hidden_dims,
+            activation=activation,
+        )
+
+        # Initialize noise parameters
         if noise_std_type == "scalar":
             self.actor_std = nn.Parameter(init_noise_std * torch.ones(n_act))
         elif noise_std_type == "log":
             self.actor_std = nn.Parameter(torch.log(init_noise_std * torch.ones(n_act)))
         else:
             raise ValueError(f"Invalid noise_std_type: {noise_std_type}")
-        critic_layers = []
-        actor_layers = []
-        for i in range(len(actor_hidden_dims)):
-            if i == 0:
-                actor_layers.append(nn.Linear(n_obs, actor_hidden_dims[i]))
-            else:
-                actor_layers.append(
-                    nn.Linear(actor_hidden_dims[i - 1], actor_hidden_dims[i])
-                )
-            actor_layers.append(activation())
-        for i in range(len(critic_hidden_dims)):
-            if i == 0:
-                critic_layers.append(nn.Linear(n_obs, critic_hidden_dims[i]))
-            else:
-                critic_layers.append(
-                    nn.Linear(critic_hidden_dims[i - 1], critic_hidden_dims[i])
-                )
-            critic_layers.append(activation())
-        actor_layers.append(nn.Linear(actor_hidden_dims[-1], n_act))
-        critic_layers.append(nn.Linear(critic_hidden_dims[-1], 1))
-        self.actor = nn.Sequential(*actor_layers)
-        self.critic = nn.Sequential(*critic_layers)
+
         Normal.set_default_validate_args(False)
 
-    def get_value(self, x):
+        # Move to device and set precision
+        self.to(self.device, self.dtype)
+
+    def get_action(self, x: torch.Tensor) -> torch.Tensor:
+        """Compute action from input."""
+        return self.actor(x)
+
+    def get_value(self, x: torch.Tensor) -> torch.Tensor:
+        """Compute state-value from input."""
         return self.critic(x)
 
-    def get_action(self, obs):
-        action_mean = self.actor(obs)
-        return action_mean
-    
     def get_action_and_value(
-        self, obs, action: torch.Tensor | None = None
-    ):
-        action_mean = self.actor(obs)
+        self, x: torch.Tensor, action: torch.Tensor | None = None
+    ) -> tuple:
+        """Compute action, log-prob, entropy, and value."""
+        action_mean = self.actor(x)
         action_std = self.actor_std.expand_as(action_mean)
+
         if self.noise_std_type == "log":
-            action_std = torch.clamp(action_std, -20.0, 5.0)
+            action_std = torch.clamp(action_std, -20.0, 2.0)
             action_std = torch.exp(action_std)
+        elif self.noise_std_type == "scalar":
+            action_std = F.softplus(action_std)
+
         dist = Normal(action_mean, action_std)
         if action is None:
             action = dist.sample()
+
         return (
             action,
             dist.log_prob(action).sum(dim=-1),
             dist.entropy().sum(dim=-1),
-            self.critic(obs),
+            self.critic(x),
             action_mean,
             action_std,
         )
-    
-    def forward(self, obs):
-        return self.get_action(obs)
+
+    def forward(self, x):
+        return self.get_action(x)
+
+
+class MLPTD3Actor(BaseAgent):
+    def __init__(
+        self,
+        n_obs: int,
+        n_act: int,
+        hidden_dims: list[int],
+        activation: type[nn.Module],
+        init_scale: float = 0.01,
+        std_min: float = 0.0,
+        std_max: float = 1.0,
+        device: str = "cuda:0",
+        dtype: torch.dtype = torch.float32,
+        num_envs: int = 1,
+    ):
+        super().__init__(device=device, dtype=dtype)
+        self.actor = self.build_networks(
+            input_dim=n_obs,
+            output_dim=n_act,
+            hidden_dims=hidden_dims,
+            activation=activation,
+        )
+        nn.init.normal_(self.actor[-1].weight, 0, init_scale)
+        nn.init.constant_(self.actor[-1].bias, 0)
+
+        noise_scales = (
+            torch.rand(num_envs, 1, device=device) * (std_max - std_min) + std_min
+        )
+        self.register_buffer("noise_scales", noise_scales)
+
+        self.register_buffer("std_min", torch.as_tensor(std_min, device=device))
+        self.register_buffer("std_max", torch.as_tensor(std_max, device=device))
+        self.n_envs = num_envs
+
+    def get_action(
+        self,
+        x: torch.Tensor,
+        deterministic: bool = False,
+        dones: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """Compute action from input."""
+        # If dones is provided, resample noise for environments that are done
+        if dones is not None and dones.sum() > 0:
+            # Generate new noise scales for done environments (one per environment)
+            new_scales = (
+                torch.rand(x.shape[0], 1, device=self.device)
+                * (self.std_max - self.std_min)
+                + self.std_min
+            )
+
+            # Update only the noise scales for environments that are done
+            dones_view = dones.view(-1, 1) > 0
+            self.noise_scales.copy_(
+                torch.where(dones_view, new_scales, self.noise_scales)
+            )
+
+        act = self.actor(x)
+        if deterministic:
+            return act
+
+        noise = torch.randn_like(act) * self.noise_scales
+        return act + noise
+
+    def forward(self, x):
+        return self.get_action(x)
+
+
+class MLPTD3Critic(BaseAgent):
+    """Twin Q-networks for TD3."""
+
+    def __init__(
+        self,
+        n_obs: int,
+        n_atoms: int,
+        v_min: float,
+        v_max: float,
+        hidden_dims: list[int] = [256, 256],
+        activation: type[nn.Module] = nn.ReLU,
+        device: str = "cuda:0",
+        dtype: torch.dtype = torch.float32,
+    ):
+        super().__init__(device=device, dtype=dtype)
+
+        self.n_atoms = n_atoms
+        self.v_min = v_min
+        self.v_max = v_max
+
+        q1 = self.build_networks(
+            input_dim=n_obs,
+            output_dim=n_atoms,
+            hidden_dims=hidden_dims,
+            activation=activation,
+        )
+        q2 = self.build_networks(
+            input_dim=n_obs,
+            output_dim=n_atoms,
+            hidden_dims=hidden_dims,
+            activation=activation,
+        )
+        self.q1 = (
+            q1
+            if n_atoms == 1
+            else MLPTD3TwinDistributionalCritic(q1, n_atoms, v_min, v_max)
+        )
+        self.q2 = (
+            q2
+            if n_atoms == 1
+            else MLPTD3TwinDistributionalCritic(q2, n_atoms, v_min, v_max)
+        )
+        if self.n_atoms > 1:
+            self.q_support = self.register_buffer(
+                "q_support",
+                torch.linspace(
+                    v_min, v_max, n_atoms, device=self.device, dtype=self.dtype
+                ),
+            )
+
+    def forward(
+        self, state: torch.Tensor, action: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Forward pass through both Q-networks."""
+        state_action = torch.cat([state, action], dim=-1)
+        q1 = self.q1(state_action)
+        q2 = self.q2(state_action)
+        return q1, q2
+
+    def q1_forward(self, state: torch.Tensor, action: torch.Tensor) -> torch.Tensor:
+        """Forward pass through Q1 network only (for actor loss)."""
+        state_action = torch.cat([state, action], dim=-1)
+        return self.q1(state_action)
+
+    def projection(
+        self,
+        obs: torch.Tensor,
+        actions: torch.Tensor,
+        rewards: torch.Tensor,
+        bootstrap: torch.Tensor,
+        discount: float,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Projection of state-action to the action space."""
+        if self.n_atoms == 1:
+            # Regular Q-networks don't need projection
+            return self.forward(obs, actions)
+        return (
+            self.q1.projection(
+                obs,
+                actions,
+                rewards,
+                bootstrap,
+                discount,
+                self.q_support,
+                self.device,
+            ),
+            self.q2.projection(
+                obs,
+                actions,
+                rewards,
+                bootstrap,
+                discount,
+                self.q_support,
+                self.device,
+            ),
+        )
+
+    def get_value(self, probs: torch.Tensor) -> torch.Tensor:
+        """Get value from Q-networks."""
+        if self.n_atoms == 1:
+            return torch.sum(probs, dim=1)
+        return torch.sum(probs * self.q_support, dim=1)
+
+
+class MLPTD3TwinDistributionalCritic(nn.Module):
+    def __init__(
+        self,
+        q: nn.Module,
+        n_atoms: int,
+        v_min: float,
+        v_max: float,
+    ):
+        super().__init__()
+
+        self.q = q
+        self.v_min = v_min
+        self.v_max = v_max
+        self.n_atoms = n_atoms
+        self.delta_z = (v_max - v_min) / (n_atoms - 1)
+
+    def forward(self, state: torch.Tensor, action: torch.Tensor) -> torch.Tensor:
+        """Forward pass through both Q-networks."""
+        return self.q(state, action)
+
+    def projection(
+        self,
+        obs: torch.Tensor,
+        actions: torch.Tensor,
+        rewards: torch.Tensor,
+        bootstrap: torch.Tensor,
+        discount: float,
+        q_support: torch.Tensor,
+        device: torch.device,
+    ) -> torch.Tensor:
+        delta_z = (self.v_max - self.v_min) / (self.n_atoms - 1)
+        batch_size = rewards.shape[0]
+
+        target_z = (
+            rewards.unsqueeze(1)
+            + bootstrap.unsqueeze(1) * discount.unsqueeze(1) * q_support
+        )
+        target_z = target_z.clamp(self.v_min, self.v_max)
+        b = (target_z - self.v_min) / delta_z
+        l = torch.floor(b).long()
+        u = torch.ceil(b).long()
+
+        l_mask = torch.logical_and((u > 0), (l == u))
+        u_mask = torch.logical_and((l < (self.n_atoms - 1)), (l == u))
+
+        l = torch.where(l_mask, l - 1, l)
+        u = torch.where(u_mask, u + 1, u)
+
+        next_dist = F.softmax(self.forward(obs, actions), dim=1)
+        proj_dist = torch.zeros_like(next_dist)
+        offset = (
+            torch.linspace(
+                0, (batch_size - 1) * self.n_atoms, batch_size, device=device
+            )
+            .unsqueeze(1)
+            .expand(batch_size, self.n_atoms)
+            .long()
+        )
+        proj_dist.view(-1).index_add_(
+            0, (l + offset).view(-1), (next_dist * (u.float() - b)).view(-1)
+        )
+        proj_dist.view(-1).index_add_(
+            0, (u + offset).view(-1), (next_dist * (b - l.float())).view(-1)
+        )
+        return proj_dist
