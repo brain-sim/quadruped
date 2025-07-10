@@ -8,8 +8,30 @@
 from __future__ import annotations
 
 import torch
+from isaaclab.assets import RigidObject
 from isaaclab.envs import ManagerBasedRLEnv
 from isaaclab.managers import SceneEntityCfg
+
+
+def zero_base_linear_velocity_penalty(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg,
+    std: float,
+) -> torch.Tensor:
+    """Penalty for non-zero base linear velocity when the command is zero."""
+    # extract the used quantities (to enable type-hinting)
+    asset: RigidObject = env.scene[asset_cfg.name]
+    # compute the error
+    target = env.command_manager.get_command("base_velocity")[:, :2]
+    lin_vel_error = torch.linalg.norm(
+        (target - asset.data.root_lin_vel_b[:, :2]), dim=1
+    )
+    lin_vel_error = torch.where(
+        (target == 0).all(dim=1),
+        lin_vel_error,
+        torch.zeros_like(lin_vel_error),
+    )
+    return -torch.exp(-lin_vel_error / std) * lin_vel_error
 
 
 def body_contact_penalty(

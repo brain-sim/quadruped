@@ -29,7 +29,27 @@ from .mdp import *  # noqa: F401, F403
 __all__ = [
     "SpotFlatEnvCfg",
     "SpotVelocityRoughEnvCfg",
+    "SpotFlatEnvCfgv2",
 ]
+
+
+@configclass
+class SpotRewardsCfgv2(SpotRewardsCfg):
+    """Spot velocity tracking with custom terrain pattern and center spawning."""
+
+    zero_base_linear_velocity_penalty = RewardTermCfg(
+        func=zero_base_linear_velocity_penalty,
+        weight=5.0,
+        params={"std": 2.0, "asset_cfg": SceneEntityCfg("robot")},
+    )
+
+
+@configclass
+class SpotFlatEnvCfgv2(SpotFlatEnvCfg):
+    """Spot velocity tracking with custom terrain pattern and center spawning."""
+
+    rewards: SpotRewardsCfgv2 = SpotRewardsCfgv2()
+
 
 # @configclass
 # class SpotVelocityRewardsCfg(SpotRewardsCfg):

@@ -1,90 +1,141 @@
+import os
+from typing import Any, Dict, Optional
+
 import torch
 import torch.nn as nn
 from torch.distributions.normal import Normal
 
+from scripts.models import AGENT_LOOKUP_BY_ALGORITHM
+from scripts.utils import EmpiricalNormalization, adjust_noise_scales
 
-class MLPPPOAgent(nn.Module):
+
+class TorchScriptNormalizer(nn.Module):
+    """
+    TorchScript-compatible normalizer that replicates EmpiricalNormalization
+    functionality without the problematic shape check.
+    """
+
+    def __init__(self, mean: torch.Tensor, std: torch.Tensor, eps: float = 1e-2):
+        super().__init__()
+        self.register_buffer("_mean", mean)
+        self.register_buffer("_std", std)
+        self.eps = eps
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # Apply normalization without shape checking
+        return (x - self._mean) / (self._std + self.eps)
+
+
+class ModelWithNormalizer(nn.Module):
+    """
+    Wrapper class that combines a model with an observation normalizer.
+    This allows both to be traced together as a single TorchScript module.
+    """
+
     def __init__(
         self,
-        n_obs,
-        n_act,
-        actor_hidden_dims=[512, 256, 128],
-        critic_hidden_dims=[512, 256, 128],
-        activation=nn.ELU,
-        noise_std_type="scalar",
-        init_noise_std=1.0,
+        model: nn.Module,
+        normalizer: Optional[nn.Module] = None,
+        action_bounds: float = 1.0,
     ):
         super().__init__()
-        self.noise_std_type = noise_std_type
-        if noise_std_type == "scalar":
-            self.actor_std = nn.Parameter(init_noise_std * torch.ones(n_act))
-        elif noise_std_type == "log":
-            self.actor_std = nn.Parameter(torch.log(init_noise_std * torch.ones(n_act)))
-        else:
-            raise ValueError(f"Invalid noise_std_type: {noise_std_type}")
-        critic_layers = []
-        actor_layers = []
-        for i in range(len(actor_hidden_dims)):
-            if i == 0:
-                actor_layers.append(nn.Linear(n_obs, actor_hidden_dims[i]))
-            else:
-                actor_layers.append(
-                    nn.Linear(actor_hidden_dims[i - 1], actor_hidden_dims[i])
-                )
-            actor_layers.append(activation())
-        for i in range(len(critic_hidden_dims)):
-            if i == 0:
-                critic_layers.append(nn.Linear(n_obs, critic_hidden_dims[i]))
-            else:
-                critic_layers.append(
-                    nn.Linear(critic_hidden_dims[i - 1], critic_hidden_dims[i])
-                )
-            critic_layers.append(activation())
-        actor_layers.append(nn.Linear(actor_hidden_dims[-1], n_act))
-        critic_layers.append(nn.Linear(critic_hidden_dims[-1], 1))
-        self.actor = nn.Sequential(*actor_layers)
-        self.critic = nn.Sequential(*critic_layers)
-        Normal.set_default_validate_args(False)
+        self.model = model
+        self.normalizer = normalizer if normalizer is not None else nn.Identity()
+        self.action_bounds = action_bounds
 
-    def get_value(self, x):
-        return self.critic(x)
+    def forward(self, obs: torch.Tensor) -> torch.Tensor:
+        # Apply normalization if available
+        normalized_obs = self.normalizer(obs)
+        # Forward through the model
+        return self.model(normalized_obs).clamp(-1, 1) * self.action_bounds
 
-    def get_action_and_value(self, obs, action=None, eval_mode=False):
-        action_mean = self.actor(obs)
-        action_std = self.actor_std.expand_as(action_mean)
-        if self.noise_std_type == "log":
-            action_std = torch.clamp(action_std, -20.0, 2.0)
-            action_std = torch.exp(action_std)
-        dist = Normal(action_mean, action_std)
-        if eval_mode:
-            action = action_mean
-        elif action is None:
-            action = dist.sample()
-        return (
-            action,
-            dist.log_prob(action).sum(dim=-1),
-            dist.entropy().sum(dim=-1),
-            self.critic(obs),
+
+def convert_checkpoint_to_jit(
+    checkpoint_path: str,
+    output_path: str,
+    algorithm: str = "fast_td3",
+    obs_type: str = "state",
+    num_eval_envs: int = 1,
+    device: str = "cpu",
+    **model_kwargs,
+) -> torch.jit.ScriptModule:
+    """
+    Convert a trained model checkpoint to TorchScript format.
+
+    Args:
+        checkpoint_path: Path to the checkpoint file
+        output_path: Path to save the TorchScript model
+        algorithm: Algorithm type ('ppo', 'td3', 'fast_td3')
+        obs_type: Observation type ('state', 'image')
+        num_eval_envs: Number of environments for evaluation (affects noise scales)
+        device: Device to load the model on
+        **model_kwargs: Additional model parameters
+
+    Returns:
+        Traced TorchScript model
+    """
+    # Load checkpoint
+    checkpoint = torch.load(checkpoint_path, map_location=device)
+
+    # Extract model parameters from checkpoint args
+    args = checkpoint.get("args", {})
+    n_obs = args.get("observation_space", 48)  # Default for Spot
+    n_act = args.get("action_space", 12)  # Default for Spot
+
+    # Get model classes based on algorithm and observation type
+    agent_classes = AGENT_LOOKUP_BY_ALGORITHM[algorithm][obs_type]
+
+    if isinstance(agent_classes, (list, tuple)):
+        # For TD3/FastTD3: [Actor, Critic]
+        actor_cls, critic_cls = agent_classes
+        print(
+            f"Loading {algorithm} model with {actor_cls.__name__} and {critic_cls.__name__}"
         )
 
-    def get_action(self, obs):
-        action_mean = self.actor(obs)
-        return action_mean
+        # Initialize actor with required parameters
+        actor_params = {
+            "n_obs": n_obs,
+            "n_act": n_act,
+            "num_envs": num_eval_envs,
+            "device": torch.device(device),
+            **model_kwargs,
+        }
 
-    def forward(self, obs):
-        return self.get_action(obs)
+        # Add algorithm-specific parameters
+        if algorithm == "fast_td3":
+            actor_params.update(
+                {
+                    "init_scale": args.get("init_scale", 0.01),
+                    "std_min": args.get("std_min", 0.001),
+                    "std_max": args.get("std_max", 0.05),
+                    "hidden_dims": args.get("actor_hidden_dims", [512, 256, 128]),
+                }
+            )
+        elif algorithm == "td3":
+            actor_params.update(
+                {
+                    "a_max": args.get("action_bounds", 1.0),
+                    "a_min": -args.get("action_bounds", 1.0),
+                    "exploration_noise": args.get("exploration_noise", 0.1),
+                    "hidden_dims": args.get("actor_hidden_dims", [512, 256, 128]),
+                }
+            )
 
+        model = actor_cls(**actor_params)
 
-# Load and convert your model
-def convert_checkpoint_to_jit(n_obs, n_act, checkpoint_path, output_path):
-    # Initialize model
-    model = MLPPPOAgent(n_obs=n_obs, n_act=n_act)
+    else:
+        # For PPO: single agent class
+        model = agent_classes(n_obs=n_obs, n_act=n_act, **model_kwargs)
+        print(f"Loading {algorithm} model with {agent_classes.__name__}")
 
-    # Load checkpoint
-    checkpoint = torch.load(checkpoint_path, map_location="cpu")
-
-    # Load state dict (adjust key name as needed)
-    if "model_state_dict" in checkpoint:
+    # Load state dict
+    if "actor_state_dict" in checkpoint:
+        state_dict = checkpoint["actor_state_dict"]
+        # Adjust noise scales if needed for FastTD3
+        if algorithm == "fast_td3":
+            state_dict = adjust_noise_scales(state_dict, model, num_eval_envs)
+        model.load_state_dict(state_dict)
+    elif "model_state_dict" in checkpoint:
         model.load_state_dict(checkpoint["model_state_dict"])
     elif "state_dict" in checkpoint:
         model.load_state_dict(checkpoint["state_dict"])
@@ -93,33 +144,323 @@ def convert_checkpoint_to_jit(n_obs, n_act, checkpoint_path, output_path):
 
     model.eval()
 
-    # Create example input (batch_size=1, obs_dim=48 for Spot)
-    example_input = torch.randn(1, n_obs)
+    # Handle observation normalizer - always include it
+    normalizer = nn.Identity()  # Default to Identity
+    if "obs_normalizer_state" in checkpoint:
+        obs_normalizer_state = checkpoint["obs_normalizer_state"]
+        if obs_normalizer_state is not None:
+            # Extract mean and std from the normalizer state
+            mean = obs_normalizer_state["_mean"].squeeze(0)  # Remove batch dimension
+            std = obs_normalizer_state["_std"].squeeze(0)  # Remove batch dimension
+            eps = args.get("obs_normalization_eps", 1e-2)
+
+            # Create TorchScript-compatible normalizer
+            normalizer = TorchScriptNormalizer(mean, std, eps)
+            print("Loaded observation normalizer from checkpoint")
+
+    # Create wrapper model that includes normalizer
+    wrapper_model = ModelWithNormalizer(
+        model,
+        normalizer,
+        action_bounds=checkpoint["args"].get("action_bounds", 1.0),
+    )
+    wrapper_model.eval()
+
+    # Create example input for tracing
+    example_input = torch.randn(1, n_obs, device=device)
 
     # Trace the model
     with torch.no_grad():
-        traced_model = torch.jit.trace(model, example_input)
+        traced_model = torch.jit.trace(wrapper_model, example_input)
 
     # Save the traced model
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
     traced_model.save(output_path)
     print(f"JIT model saved to {output_path}")
 
     return traced_model
 
 
-# Usage
-if __name__ == "__main__":
-    n_obs = 48
-    n_act = 12
-    traced_model = convert_checkpoint_to_jit(
-        n_obs,
-        n_act,
-        "/home/chandramouli/quadruped/wandb/run-20250702_135541-hp4ft4r4/files/checkpoints/ckpt_983040000.pt",
-        "/home/chandramouli/cognitiverl/source/cognitiverl/cognitiverl/tasks/direct/custom_assets/spot_policy_test_v2.pt",
+def test_non_traced_model(
+    test_input: torch.Tensor,
+    checkpoint_path: str,
+    algorithm: str = "fast_td3",
+    obs_type: str = "state",
+    num_eval_envs: int = 1,
+    device: str = "cpu",
+    **model_kwargs,
+) -> torch.Tensor:
+    """
+    Test the non-traced model with sample input.
+
+    Args:
+        checkpoint_path: Path to the checkpoint file
+        algorithm: Algorithm type
+        obs_type: Observation type
+        num_eval_envs: Number of environments
+        device: Device to run the test on
+        **model_kwargs: Additional model parameters
+
+    Returns:
+        Output from the non-traced model
+    """
+    # Load checkpoint
+    checkpoint = torch.load(checkpoint_path, map_location=device)
+
+    # Extract model parameters from checkpoint args
+    args = checkpoint.get("args", {})
+    n_obs = args.get("observation_space", 48)
+    n_act = args.get("action_space", 12)
+
+    # Get model classes based on algorithm and observation type
+    agent_classes = AGENT_LOOKUP_BY_ALGORITHM[algorithm][obs_type]
+
+    if isinstance(agent_classes, (list, tuple)):
+        actor_cls, critic_cls = agent_classes
+        actor_params = {
+            "n_obs": n_obs,
+            "n_act": n_act,
+            "num_envs": num_eval_envs,
+            "device": torch.device(device),
+            **model_kwargs,
+        }
+
+        if algorithm == "fast_td3":
+            actor_params.update(
+                {
+                    "init_scale": args.get("init_scale", 0.01),
+                    "std_min": args.get("std_min", 0.001),
+                    "std_max": args.get("std_max", 0.05),
+                    "hidden_dims": args.get("actor_hidden_dims", [512, 256, 128]),
+                }
+            )
+        elif algorithm == "td3":
+            actor_params.update(
+                {
+                    "a_max": args.get("action_bounds", 1.0),
+                    "a_min": -args.get("action_bounds", 1.0),
+                    "exploration_noise": args.get("exploration_noise", 0.1),
+                    "hidden_dims": args.get("actor_hidden_dims", [512, 256, 128]),
+                }
+            )
+
+        model = actor_cls(**actor_params)
+    else:
+        model = agent_classes(n_obs=n_obs, n_act=n_act, **model_kwargs)
+
+    # Load state dict
+    if "actor_state_dict" in checkpoint:
+        state_dict = checkpoint["actor_state_dict"]
+        if algorithm == "fast_td3":
+            state_dict = adjust_noise_scales(state_dict, model, num_eval_envs)
+        model.load_state_dict(state_dict)
+    elif "model_state_dict" in checkpoint:
+        model.load_state_dict(checkpoint["model_state_dict"])
+    elif "state_dict" in checkpoint:
+        model.load_state_dict(checkpoint["state_dict"])
+    else:
+        model.load_state_dict(checkpoint)
+
+    model.eval()
+
+    # Handle observation normalizer
+    normalizer = nn.Identity()
+    if "obs_normalizer_state" in checkpoint:
+        obs_normalizer_state = checkpoint["obs_normalizer_state"]
+        if obs_normalizer_state is not None:
+            # Use the original EmpiricalNormalization for comparison
+            normalizer = EmpiricalNormalization(
+                shape=n_obs,
+                device=torch.device(device),
+            )
+            normalizer.load_state_dict(obs_normalizer_state)
+            normalizer.eval()
+
+    # Create wrapper model
+    wrapper_model = ModelWithNormalizer(
+        model,
+        normalizer,
+        action_bounds=checkpoint["args"].get("action_bounds", 1.0),
     )
-    # Test the traced model
-    test_input = torch.zeros(1, n_obs)
-    test_input[:, 8] = -1.0
-    output = traced_model(test_input)
-    print(output)
-    print(f"Test output shape: {output.shape}")
+    wrapper_model.eval()
+
+    # Run inference
+    with torch.no_grad():
+        output = wrapper_model(test_input)
+
+    return output
+
+
+def test_traced_model(
+    test_input: torch.Tensor, model_path: str, device: str = "cpu"
+) -> torch.Tensor:
+    """
+    Test the traced model with sample input.
+
+    Args:
+        test_input: Test input
+        model_path: Path to the traced model
+        device: Device to run the test on
+
+    Returns:
+        Output from the traced model
+    """
+    # Load the traced model
+    traced_model = torch.jit.load(model_path, map_location=device)
+
+    # Run inference
+    with torch.no_grad():
+        output = traced_model(test_input)
+
+    return output
+
+
+def compare_models(
+    checkpoint_path: str,
+    traced_model_path: str,
+    algorithm: str = "fast_td3",
+    obs_type: str = "state",
+    num_eval_envs: int = 1,
+    n_obs: int = 48,
+    device: str = "cpu",
+    **model_kwargs,
+) -> None:
+    """
+    Compare outputs from non-traced and traced models.
+
+    Args:
+        checkpoint_path: Path to the checkpoint file
+        traced_model_path: Path to the traced model
+        algorithm: Algorithm type
+        obs_type: Observation type
+        num_eval_envs: Number of environments
+        device: Device to run the test on
+        **model_kwargs: Additional model parameters
+    """
+    print("Testing non-traced model...")
+    test_input = torch.zeros(1, n_obs, device=device)
+    test_input[:, :] = torch.tensor(
+        [
+            -0.22250841557979584,
+            0.06430161744356155,
+            -0.06564119458198547,
+            -0.18024492263793945,
+            -0.25385424494743347,
+            0.037123724818229675,
+            -0.1686849296092987,
+            0.02569953165948391,
+            -0.9853349328041077,
+            4.5,
+            0.0,
+            0.0,
+            0.06433702260255814,
+            -0.01719663292169571,
+            0.014656752347946167,
+            -0.07042693346738815,
+            -0.25527459383010864,
+            -0.241951584815979,
+            -0.24630218744277954,
+            -0.19815486669540405,
+            -0.23674046993255615,
+            -0.233176589012146,
+            -0.6776375770568848,
+            -0.6399862766265869,
+            -0.013985919766128063,
+            -0.04501483961939812,
+            0.062119126319885254,
+            -0.032316453754901886,
+            -0.20223715901374817,
+            0.23771165311336517,
+            -0.28220224380493164,
+            -0.2544798254966736,
+            0.00019143521785736084,
+            0.2071858048439026,
+            -0.39275211095809937,
+            -0.22758154571056366,
+            -1.372024416923523e-05,
+            0.028961878269910812,
+            -0.05433417856693268,
+            0.027478661388158798,
+            0.003815931733697653,
+            0.019058560952544212,
+            -0.03938805311918259,
+            -0.03942102566361427,
+            -0.057747986167669296,
+            -0.0914078876376152,
+            0.04690054804086685,
+            0.019184134900569916,
+        ]
+    )
+    non_traced_output = test_non_traced_model(
+        test_input=test_input,
+        checkpoint_path=checkpoint_path,
+        algorithm=algorithm,
+        obs_type=obs_type,
+        num_eval_envs=num_eval_envs,
+        device=device,
+        **model_kwargs,
+    )
+
+    print("Testing traced model...")
+    traced_output = test_traced_model(
+        test_input=test_input,
+        model_path=traced_model_path,
+        device=device,
+    )
+
+    print("\n" + "=" * 50)
+    print("COMPARISON RESULTS")
+    print("=" * 50)
+    print(f"Non-traced output shape: {non_traced_output.shape}")
+    print(f"Traced output shape: {traced_output.shape}")
+    print(f"Non-traced output: {non_traced_output}")
+    print(f"Traced output: {traced_output}")
+    print(
+        f"Non-traced output range: [{non_traced_output.min().item():.6f}, {non_traced_output.max().item():.6f}]"
+    )
+    print(
+        f"Traced output range: [{traced_output.min().item():.6f}, {traced_output.max().item():.6f}]"
+    )
+
+    # Calculate differences
+    diff = torch.abs(non_traced_output - traced_output)
+    max_diff = diff.max().item()
+    mean_diff = diff.mean().item()
+
+    print(f"Maximum absolute difference: {max_diff:.8f}")
+    print(f"Mean absolute difference: {mean_diff:.8f}")
+
+    if max_diff < 1e-6:
+        print("✅ Models produce identical outputs (within numerical precision)")
+    elif max_diff < 1e-4:
+        print("✅ Models produce very similar outputs (minor numerical differences)")
+    else:
+        print("❌ Models produce significantly different outputs")
+
+    print("=" * 50)
+
+
+if __name__ == "__main__":
+    # Example usage for FastTD3
+    checkpoint_path = "/home/chandramouli/quadruped/wandb/run-20250709_193555-oy4u3dgc/files/checkpoints/ckpt_final.pt"
+    output_path = "/home/chandramouli/cognitiverl/source/cognitiverl/cognitiverl/tasks/direct/custom_assets/spot_policy_test_v2.pt"
+
+    # Convert checkpoint to TorchScript
+    traced_model = convert_checkpoint_to_jit(
+        checkpoint_path=checkpoint_path,
+        output_path=output_path,
+        algorithm="fast_td3",
+        obs_type="state",
+        num_eval_envs=1,
+        device="cpu",
+    )
+
+    # Compare the models
+    compare_models(
+        checkpoint_path=checkpoint_path,
+        traced_model_path=output_path,
+        algorithm="fast_td3",
+        obs_type="state",
+        num_eval_envs=1,
+        device="cpu",
+    )

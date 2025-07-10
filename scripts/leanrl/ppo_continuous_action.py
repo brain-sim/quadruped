@@ -11,6 +11,7 @@ import torch.nn as nn
 import torch.optim as optim
 import torchvision
 import tqdm
+
 import wandb
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -190,12 +191,11 @@ def make_isaaclab_env(
     **kwargs,
 ):
     import isaaclab_tasks  # noqa: F401
+    import quadruped.tasks  # noqa: F401
     from isaaclab_tasks.utils.parse_cfg import parse_env_cfg
 
     # NOW IMPORT AFTER SimulationApp is initialized
     from wrappers import IsaacLabVecEnvWrapper
-
-    import quadruped.tasks  # noqa: F401
 
     def thunk():
         cfg = parse_env_cfg(
@@ -422,14 +422,6 @@ def main(args):
                             if termination_name not in termination_info_buffer:
                                 termination_info_buffer[termination_name] = []
                             termination_info_buffer[termination_name].append(value)
-
-                if "episode" in infos:
-                    for r in infos["episode"]["r"]:
-                        max_ep_ret = max(max_ep_ret, r)
-                        avg_returns.append(r)
-                    for r in infos["episode"]["reward_max"]:
-                        max_ep_reward = max(max_ep_reward, r)
-                        avg_reward_per_step.append(r)
 
                 if args.log_video:
                     frame = next_obs[indices, : 3 * 32 * 32].reshape(-1, 3, 32, 32)
