@@ -248,7 +248,7 @@ def main(args):
         config=vars(args),
         save_code=True,
     )
-
+    os.environ["WANDB_IGNORE_GLOBS"] = "checkpoints/*,*.pt"
     # prepare local checkpoint directory inside the wandb run folder
     run_dir = run.dir
     ckpt_dir = os.path.join(run_dir, "checkpoints")

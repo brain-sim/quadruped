@@ -22,9 +22,10 @@ from isaaclab.utils import configclass
 from tensordict import TensorDict, from_module, from_modules
 from tensordict.nn import CudaGraphModule
 from torch.amp import GradScaler, autocast
+from torchrl.data import LazyTensorStorage, TensorDictReplayBuffer
 
 import wandb
-from scripts.buffers import SimpleReplayBuffer, TorchRLInfoLogger
+from scripts.buffers import SimpleReplayBufferOriginal, TorchRLInfoLogger
 from scripts.models import AGENT_LOOKUP_BY_ALGORITHM, AGENT_LOOKUP_BY_INPUT_TYPE
 from scripts.utils import (
     EmpiricalNormalization,
@@ -35,7 +36,6 @@ from scripts.utils import (
     save_params,
     seed_everything,
 )
-from torchrl.data import LazyTensorStorage, TensorDictReplayBuffer
 
 # TODO: Batch size (global) and transition batch size should be different.
 # The current code only works if they are both the same.
@@ -78,7 +78,7 @@ class ExperimentArgs:
     device: str = "cuda:0"
     """cuda:0 will be enabled by default"""
 
-    total_timesteps: int = 1_000_000
+    total_timesteps: int = 2_000_000_000
     """total timesteps of the experiments"""
     actor_learning_rate: float = 3e-4
     """the learning rate of the actor"""
@@ -160,6 +160,10 @@ class ExperimentArgs:
     """log interval"""
     checkpoint_interval: int = 1000
     """checkpoint interval"""
+    load_checkpoint_path: str = ""
+    """the path to the checkpoint"""
+    resume_from_checkpoint: bool = False
+    """whether to resume from checkpoint"""
 
     clip_grad_norm: bool = False
     """whether to clip the gradient norm"""
@@ -264,7 +268,7 @@ def main(args):
         config=vars(args),
         save_code=True,
     )
-
+    os.environ["WANDB_IGNORE_GLOBS"] = "checkpoints/*,*.pt"
     # prepare local checkpoint directory inside the wandb run folder
     run_dir = run.dir
     ckpt_dir = os.path.join(run_dir, "checkpoints")
@@ -342,10 +346,6 @@ def main(args):
         device=device,
         hidden_dims=args.actor_hidden_dims,
     )
-    # Copy params to actor_detach without grad
-    from_module(actor).data.to_module(actor_detach)
-    policy = actor_detach.explore
-
     qnet = critic_class(
         n_obs=n_obs,
         n_act=n_act,
@@ -367,7 +367,34 @@ def main(args):
         v_max=args.v_max,
         hidden_dims=args.critic_hidden_dims,
     )
+    resume_global_step = 0
+    if args.resume_from_checkpoint:
+        checkpoint = torch.load(args.load_checkpoint_path, map_location=device)
+        actor.load_state_dict(checkpoint["actor_state_dict"])
+        qnet.load_state_dict(checkpoint["qnet_state_dict"])
+        qnet_target.load_state_dict(checkpoint["qnet_target_state_dict"])
+        if "obs_normalizer_state_dict" in checkpoint:
+            obs_normalizer.load_state_dict(checkpoint["obs_normalizer_state_dict"])
+        if "critic_obs_normalizer_state_dict" in checkpoint:
+            reward_normalizer.load_state_dict(
+                checkpoint["critic_obs_normalizer_state_dict"]
+            )
+        if "reward_normalizer_state_dict" in checkpoint:
+            reward_normalizer.load_state_dict(
+                checkpoint["reward_normalizer_state_dict"]
+            )
+        resume_global_step = checkpoint["global_step"]
+        print_dict(
+            f"Resuming from step: {resume_global_step} which is {resume_global_step * checkpoint['args']['num_envs']} iterations",
+            color="magenta",
+            attrs=["bold"],
+        )
+
     qnet_target.load_state_dict(qnet.state_dict())
+
+    # Copy params to actor_detach without grad
+    from_module(actor).data.to_module(actor_detach)
+    policy = actor_detach.explore
 
     q_optimizer = optim.AdamW(
         list(qnet.parameters()),
@@ -391,7 +418,7 @@ def main(args):
         eta_min=torch.tensor(args.actor_learning_rate_end, device=device),
     )
 
-    rb = SimpleReplayBuffer(
+    rb = SimpleReplayBufferOriginal(
         n_env=args.num_envs,
         buffer_size=args.buffer_size,
         n_obs=n_obs,
@@ -558,7 +585,12 @@ def main(args):
     # TRY NOT TO MODIFY: start the game
     obs, _ = envs.reset()
     args.num_iterations = args.total_timesteps // args.num_envs
-    pbar = tqdm.tqdm(range(args.num_iterations))
+    pbar = tqdm.tqdm(
+        range(resume_global_step, args.num_iterations),
+        initial=resume_global_step,
+        total=args.num_iterations,
+        desc=f"Resuming from step {resume_global_step}",
+    )
     start_time = None
     dones = None
     max_ep_ret = -float("inf")
@@ -569,7 +601,7 @@ def main(args):
     for global_step in pbar:
         mark_step()
         out_main = TensorDict()
-        if global_step == args.measure_burnin:
+        if global_step == args.measure_burnin + resume_global_step:
             start_time = time.time()
             measure_burnin = global_step
 
@@ -611,7 +643,7 @@ def main(args):
         obs = next_obs
 
         # ALGO LOGIC: training.
-        if global_step >= args.measure_burnin:
+        if global_step >= args.measure_burnin + resume_global_step:
             speed = (
                 (global_step - measure_burnin)
                 * args.num_envs
@@ -678,12 +710,12 @@ def main(args):
             actor_scheduler.step()
             q_scheduler.step()
 
-        if global_step >= args.measure_burnin:
+        if global_step >= args.measure_burnin + resume_global_step:
             pbar.set_description(f"{speed: 4.4f} sps, " + desc)
     envs.close()
     wandb.finish()
     save_params(
-        global_step=global_step,
+        global_step=args.total_timesteps // args.num_envs,
         actor=actor,
         qnet=qnet,
         qnet_target=qnet_target,

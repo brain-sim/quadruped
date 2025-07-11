@@ -12,10 +12,11 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import tqdm
-import wandb
 from isaaclab.utils import configclass
 from tensordict import TensorDict, from_module
 from tensordict.nn import CudaGraphModule
+
+import wandb
 
 os.environ["TORCHDYNAMO_INLINE_INBUILT_NN_MODULES"] = "1"
 
@@ -165,14 +166,13 @@ def make_env(env_id, idx, capture_video, run_name, gamma):
 
 
 def make_isaaclab_env(task, device, num_envs, capture_video, disable_fabric, **args):
+    import cognitiverl.tasks  # noqa: F401
     import isaaclab_tasks  # noqa: F401
     from isaaclab_rl.torchrl import (
         IsaacLabRecordEpisodeStatistics,
         IsaacLabVecEnvWrapper,
     )
     from isaaclab_tasks.utils.parse_cfg import parse_env_cfg
-
-    import cognitiverl.tasks  # noqa: F401
 
     def thunk():
         cfg = parse_env_cfg(
@@ -360,7 +360,7 @@ def main(args):
         config=vars(args),
         save_code=True,
     )
-
+    os.environ["WANDB_IGNORE_GLOBS"] = "checkpoints/*,*.pt"
     device = (
         torch.device(args.device) if torch.cuda.is_available() else torch.device("cpu")
     )

@@ -1,8 +1,9 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torch.nn.functional as F
 from torch.distributions.normal import Normal
+
+from .base_agent import BaseAgent
 
 
 class MLPPPOAgent(BaseAgent):
@@ -21,6 +22,8 @@ class MLPPPOAgent(BaseAgent):
         output_activation: type[nn.Module] | None = None,
         noise_std_type: str = "scalar",
         init_noise_std: float = 1.0,
+        device: str = "cuda:0",
+        dtype: torch.dtype = torch.float32,
     ):
         super().__init__(device=device, dtype=dtype)
 
@@ -69,7 +72,7 @@ class MLPPPOAgent(BaseAgent):
             action,
             dist.log_prob(action).sum(dim=-1),
             dist.entropy().sum(dim=-1),
-            self.critic(x),
+            self.critic(obs),
             action_mean,
             action_std,
         )
@@ -343,7 +346,7 @@ class MLPFastTD3Actor(nn.Module):
         output_activation: type[nn.Module] | None = nn.Tanh,
         std_min: float = 0.05,
         std_max: float = 0.8,
-        device: torch.device = None,
+        device: torch.device = torch.device("cpu"),
     ):
         super().__init__()
         self.n_act = n_act
@@ -358,7 +361,7 @@ class MLPFastTD3Actor(nn.Module):
         self.net.to(device)
         self.fc_mu = nn.Sequential(
             nn.Linear(hidden_dims[-1], n_act),
-            output_activation(),
+            output_activation() if output_activation is not None else nn.Identity(),
         )
         nn.init.normal_(self.fc_mu[0].weight, 0.0, init_scale)
         nn.init.constant_(self.fc_mu[0].bias, 0.0)

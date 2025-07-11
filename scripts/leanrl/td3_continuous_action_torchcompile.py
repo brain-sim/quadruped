@@ -192,7 +192,7 @@ def main(args):
         config=vars(args),
         save_code=True,
     )
-
+    os.environ["WANDB_IGNORE_GLOBS"] = "checkpoints/*,*.pt"
     device = (
         torch.device(args.device) if torch.cuda.is_available() else torch.device("cpu")
     )

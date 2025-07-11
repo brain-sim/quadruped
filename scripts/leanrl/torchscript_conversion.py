@@ -41,7 +41,7 @@ class ModelWithNormalizer(nn.Module):
         super().__init__()
         self.model = model
         self.normalizer = normalizer if normalizer is not None else nn.Identity()
-        self.action_bounds = action_bounds
+        self.register_buffer("action_bounds", torch.tensor(action_bounds))
 
     def forward(self, obs: torch.Tensor) -> torch.Tensor:
         # Apply normalization if available
@@ -339,58 +339,7 @@ def compare_models(
     """
     print("Testing non-traced model...")
     test_input = torch.zeros(1, n_obs, device=device)
-    test_input[:, :] = torch.tensor(
-        [
-            -0.22250841557979584,
-            0.06430161744356155,
-            -0.06564119458198547,
-            -0.18024492263793945,
-            -0.25385424494743347,
-            0.037123724818229675,
-            -0.1686849296092987,
-            0.02569953165948391,
-            -0.9853349328041077,
-            4.5,
-            0.0,
-            0.0,
-            0.06433702260255814,
-            -0.01719663292169571,
-            0.014656752347946167,
-            -0.07042693346738815,
-            -0.25527459383010864,
-            -0.241951584815979,
-            -0.24630218744277954,
-            -0.19815486669540405,
-            -0.23674046993255615,
-            -0.233176589012146,
-            -0.6776375770568848,
-            -0.6399862766265869,
-            -0.013985919766128063,
-            -0.04501483961939812,
-            0.062119126319885254,
-            -0.032316453754901886,
-            -0.20223715901374817,
-            0.23771165311336517,
-            -0.28220224380493164,
-            -0.2544798254966736,
-            0.00019143521785736084,
-            0.2071858048439026,
-            -0.39275211095809937,
-            -0.22758154571056366,
-            -1.372024416923523e-05,
-            0.028961878269910812,
-            -0.05433417856693268,
-            0.027478661388158798,
-            0.003815931733697653,
-            0.019058560952544212,
-            -0.03938805311918259,
-            -0.03942102566361427,
-            -0.057747986167669296,
-            -0.0914078876376152,
-            0.04690054804086685,
-            0.019184134900569916,
-        ]
-    )
+    test_input[:, 8] = -1.0
     non_traced_output = test_non_traced_model(
         test_input=test_input,
         checkpoint_path=checkpoint_path,
@@ -442,7 +391,7 @@ def compare_models(
 
 if __name__ == "__main__":
     # Example usage for FastTD3
-    checkpoint_path = "/home/chandramouli/quadruped/wandb/run-20250709_193555-oy4u3dgc/files/checkpoints/ckpt_final.pt"
+    checkpoint_path = "/home/chandramouli/quadruped/wandb/run-20250710_124753-6z8oy4u1/files/checkpoints/ckpt_138000.pt"
     output_path = "/home/chandramouli/cognitiverl/source/cognitiverl/cognitiverl/tasks/direct/custom_assets/spot_policy_test_v2.pt"
 
     # Convert checkpoint to TorchScript
