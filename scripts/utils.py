@@ -530,8 +530,10 @@ def save_params(
     qnet_target,
     args,
     save_path,
+    rb=None,
     obs_normalizer=None,
     critic_obs_normalizer=None,
+    save_buffer_path=None,
 ):
     """Save model parameters and training configuration to disk."""
 
@@ -562,6 +564,8 @@ def save_params(
             else None
         )
     torch.save(save_dict, save_path, _use_new_zipfile_serialization=True)
+    if save_buffer_path is not None and rb is not None:
+        torch.save(rb, save_buffer_path, _use_new_zipfile_serialization=True)
     print(f"Saved parameters and configuration to {save_path}")
 
 

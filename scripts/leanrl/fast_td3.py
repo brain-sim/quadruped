@@ -712,18 +712,29 @@ def main(args):
 
         if global_step >= args.measure_burnin + resume_global_step:
             pbar.set_description(f"{speed: 4.4f} sps, " + desc)
+
     envs.close()
-    wandb.finish()
     save_params(
         global_step=args.total_timesteps // args.num_envs,
         actor=actor,
         qnet=qnet,
+        rb=rb,
         qnet_target=qnet_target,
         args=args,
         obs_normalizer=obs_normalizer,
         critic_obs_normalizer=None,
         save_path=os.path.join(ckpt_dir, f"ckpt_final.pt"),
+        save_buffer_path=os.path.join(ckpt_dir, f"buffer_final.pt"),
     )
+    artifact = wandb.Artifact(
+        name="fast-td3-final-checkpoint",
+        type="model",
+        description=f"Last TD3 with return",
+    )
+    artifact.add_file(os.path.join(ckpt_dir, f"ckpt_final.pt"))
+    run.log_artifact(artifact)
+
+    wandb.finish()
 
 
 if __name__ == "__main__":
