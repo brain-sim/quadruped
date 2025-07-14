@@ -268,7 +268,7 @@ def main(args):
         config=vars(args),
         save_code=True,
     )
-    os.environ["WANDB_IGNORE_GLOBS"] = "checkpoints/*,*.pt"
+    os.environ["WANDB_IGNORE_GLOBS"] = "*.pt"
     # prepare local checkpoint directory inside the wandb run folder
     run_dir = run.dir
     ckpt_dir = os.path.join(run_dir, "checkpoints")
@@ -726,11 +726,12 @@ def main(args):
         save_path=os.path.join(ckpt_dir, f"ckpt_final.pt"),
         save_buffer_path=os.path.join(ckpt_dir, f"buffer_final.pt"),
     )
-    artifact = wandb.Artifact(
-        name="fast-td3-final-checkpoint",
-        type="model",
-        description=f"Last TD3 with return",
-    )
+    if args.log:
+        artifact = wandb.Artifact(
+            name="fast-td3-final-checkpoint",
+            type="model",
+            description=f"Last TD3 with return",
+        )
     artifact.add_file(os.path.join(ckpt_dir, f"ckpt_final.pt"))
     run.log_artifact(artifact)
 

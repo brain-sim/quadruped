@@ -31,7 +31,7 @@ def zero_base_linear_velocity_penalty(
         lin_vel_error,
         torch.zeros_like(lin_vel_error),
     )
-    return -torch.exp(-lin_vel_error / std) * lin_vel_error
+    return torch.exp(-lin_vel_error / std) * lin_vel_error
 
 
 def body_contact_penalty(

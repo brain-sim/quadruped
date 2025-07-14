@@ -1,4 +1,5 @@
 import os
+from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
 import torch
@@ -389,27 +390,38 @@ def compare_models(
     print("=" * 50)
 
 
+@dataclass
+class Args:
+    checkpoint_path: str = "/home/chandramouli/cognitiverl/source/cognitiverl/cognitiverl/tasks/direct/custom_assets/spot_policy_test_v2.pt"
+    output_path: str = "/home/chandramouli/cognitiverl/source/cognitiverl/cognitiverl/tasks/direct/custom_assets/spot_policy_test_v2.pt"
+    algorithm: str = "fast_td3"
+    obs_type: str = "state"
+    num_eval_envs: int = 1
+    device: str = "cpu"
+
+
 if __name__ == "__main__":
     # Example usage for FastTD3
-    checkpoint_path = "/home/chandramouli/quadruped/wandb/run-20250710_124753-6z8oy4u1/files/checkpoints/ckpt_138000.pt"
-    output_path = "/home/chandramouli/cognitiverl/source/cognitiverl/cognitiverl/tasks/direct/custom_assets/spot_policy_test_v2.pt"
+    import tyro
+
+    args = tyro.cli(Args)
 
     # Convert checkpoint to TorchScript
     traced_model = convert_checkpoint_to_jit(
-        checkpoint_path=checkpoint_path,
-        output_path=output_path,
-        algorithm="fast_td3",
-        obs_type="state",
-        num_eval_envs=1,
-        device="cpu",
+        checkpoint_path=args.checkpoint_path,
+        output_path=args.output_path,
+        algorithm=args.algorithm,
+        obs_type=args.obs_type,
+        num_eval_envs=args.num_eval_envs,
+        device=args.device,
     )
 
     # Compare the models
     compare_models(
-        checkpoint_path=checkpoint_path,
-        traced_model_path=output_path,
-        algorithm="fast_td3",
-        obs_type="state",
-        num_eval_envs=1,
-        device="cpu",
+        checkpoint_path=args.checkpoint_path,
+        traced_model_path=args.output_path,
+        algorithm=args.algorithm,
+        obs_type=args.obs_type,
+        num_eval_envs=args.num_eval_envs,
+        device=args.device,
     )
