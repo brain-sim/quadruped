@@ -12,6 +12,7 @@ from isaaclab.envs.mdp.curriculums import modify_reward_weight
 from isaaclab.managers import CurriculumTermCfg as CurrTerm
 from isaaclab.managers import ObservationGroupCfg as ObsGroup
 from isaaclab.managers import ObservationTermCfg as ObsTerm
+from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.sensors import RayCasterCfg, patterns
@@ -20,7 +21,6 @@ from isaaclab.sensors import RayCasterCfg, patterns
 from isaaclab.terrains.config.rough import ROUGH_TERRAINS_CFG
 from isaaclab.utils import configclass
 from isaaclab.utils.noise import AdditiveUniformNoiseCfg as Unoise
-from isaaclab_tasks.manager_based.locomotion.velocity.config.spot import mdp as spot_mdp
 from isaaclab_tasks.manager_based.locomotion.velocity.config.spot.flat_env_cfg import (  # noqa: F401, F403
     SpotCommandsCfg,
     SpotFlatEnvCfg,
@@ -47,7 +47,7 @@ class SpotFlatEnvCurriculumCfg(CurriculumCfg):
         func=modify_reward_weight,
         params={
             "term_name": "zero_base_linear_velocity_penalty",
-            "weight": -20.0,
+            "weight": -10.0,
             "num_steps": 25_000,
         },
     )
@@ -57,17 +57,17 @@ class SpotFlatEnvCurriculumCfg(CurriculumCfg):
 class SpotRewardsCfgv2(SpotRewardsCfg):
     """Spot velocity tracking with custom terrain pattern and center spawning."""
 
-    zero_base_linear_velocity_penalty = RewardTermCfg(
+    zero_base_linear_velocity_penalty = RewTerm(
         func=zero_base_linear_velocity_penalty,
-        weight=0.0,
+        weight=-5.0,
         params={"std": 2.0, "asset_cfg": SceneEntityCfg("robot")},
     )
 
     def __post_init__(self):
         super().__post_init__()
-        self.base_angular_velocity.weight = 12.0
-        self.base_linear_velocity.weight = 12.0
-        self.gait.weight = 25.0
+        self.base_angular_velocity.weight = 25.0
+        self.base_linear_velocity.weight = 25.0
+        self.gait.weight = 50.0
         self.base_motion.weight = -2.0
         self.base_orientation.weight = -3.0
         self.foot_slip.weight = -2.0
@@ -80,10 +80,6 @@ class SpotFlatEnvCfgv2(SpotFlatEnvCfg):
 
     rewards: SpotRewardsCfgv2 = SpotRewardsCfgv2()
     curriculum: SpotFlatEnvCurriculumCfg = SpotFlatEnvCurriculumCfg()
-
-    def __post_init__(self):
-        super().__post_init__()
-        print(self.curriculum)
 
 
 # @configclass
