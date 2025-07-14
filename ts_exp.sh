@@ -65,7 +65,7 @@ echo "===========================================" >> "$LOG_FILE"
 echo "Experiment: $TIMESTAMP" >> "$LOG_FILE"
 echo "Commit: $COMMIT_HASH" >> "$LOG_FILE"
 echo "Branch: $CURRENT_BRANCH" >> "$LOG_FILE"
-echo "Command: tsp $*" >> "$LOG_FILE"
+echo "Command: ts $*" >> "$LOG_FILE"
 echo "Diff file: $DIFF_FILE" >> "$LOG_FILE"
 echo "===========================================" >> "$LOG_FILE"
 echo "" >> "$LOG_FILE"
@@ -84,7 +84,7 @@ cleanup() {
 trap cleanup EXIT
 
 # Run the task spooler command with all arguments
-echo "Running task spooler command: tsp $*"
+echo "Running task spooler command: ts $*"
 echo "This will execute on commit: $COMMIT_HASH"
 echo "Diff stored in: $DIFF_FILE"
 tsp "$@"
