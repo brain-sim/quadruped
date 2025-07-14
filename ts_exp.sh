@@ -87,7 +87,7 @@ trap cleanup EXIT
 echo "Running task spooler command: ts $*"
 echo "This will execute on commit: $COMMIT_HASH"
 echo "Diff stored in: $DIFF_FILE"
-tsp "$@"
+ts "$@"
 
 echo "Task spooler job queued successfully on commit $COMMIT_HASH"
 echo "Check results and if good, you can cherry-pick or merge this commit: $COMMIT_HASH"

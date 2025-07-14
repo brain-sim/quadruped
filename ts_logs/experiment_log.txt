@@ -6,3 +6,11 @@ Command: tsp -L gait_penalty and command following rewards. python scripts/leanr
 Diff file: ts_logs/4ce351ac7fd13efffc4346a185fd8b2a5df77477.diff
 ===========================================
 
+===========================================
+Experiment: 2025-07-14 20:57:54
+Commit: 74911aa302d00c9d99b3d2602e91a8f74ae1cde5
+Branch: fast_td3
+Command: ts -L gait_penalty and command following rewards. python scripts/leanrl/fast_td3.py --task Spot-Velocity-Flat-v1 --action_bounds 15.0 --log_interval 1 --headless --compile False --total_timesteps 2_000_000_000 --log
+Diff file: ts_logs/74911aa302d00c9d99b3d2602e91a8f74ae1cde5.diff
+===========================================
+
