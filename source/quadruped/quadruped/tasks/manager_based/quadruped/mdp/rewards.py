@@ -49,3 +49,19 @@ def body_contact_penalty(
         torch.zeros_like(body_contact_forces),
     )
     return torch.sum(body_contact_forces_thresholded, dim=-1)
+
+
+def base_linear_velocity_reward(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg,
+    std: float,
+) -> torch.Tensor:
+    """Reward tracking of linear velocity commands (xy axes) using abs exponential kernel."""
+    # extract the used quantities (to enable type-hinting)
+    asset: RigidObject = env.scene[asset_cfg.name]
+    # compute the error
+    target = env.command_manager.get_command("base_velocity")[:, :2]
+    lin_vel_error = torch.linalg.norm(
+        (target - asset.data.root_lin_vel_b[:, :2]), dim=1
+    )
+    return torch.exp(-lin_vel_error / std**2)

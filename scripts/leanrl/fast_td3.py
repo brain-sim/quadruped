@@ -5,9 +5,7 @@ os.environ["TORCHDYNAMO_INLINE_INBUILT_NN_MODULES"] = "1"
 os.environ["OMP_NUM_THREADS"] = "1"
 
 import os
-import sys
 import time
-from collections import deque
 from dataclasses import asdict
 from typing import Optional
 
@@ -19,14 +17,12 @@ import torch.nn.functional as F
 import torch.optim as optim
 import tqdm
 from isaaclab.utils import configclass
-from tensordict import TensorDict, from_module, from_modules
-from tensordict.nn import CudaGraphModule
+from tensordict import TensorDict, from_module
 from torch.amp import GradScaler, autocast
-from torchrl.data import LazyTensorStorage, TensorDictReplayBuffer
 
 import wandb
 from scripts.buffers import SimpleReplayBufferOriginal, TorchRLInfoLogger
-from scripts.models import AGENT_LOOKUP_BY_ALGORITHM, AGENT_LOOKUP_BY_INPUT_TYPE
+from scripts.models import AGENT_LOOKUP_BY_ALGORITHM
 from scripts.utils import (
     EmpiricalNormalization,
     RewardNormalizer,
@@ -84,7 +80,7 @@ class ExperimentArgs:
     """the learning rate of the actor"""
     critic_learning_rate: float = 3e-4
     """the learning rate of the optimizer"""
-    buffer_size: int = 10240
+    buffer_size: int = 1024 * 5
     """the replay memory buffer size"""
     buffer_device: str = "cpu"
     """the device of the replay memory buffer"""
@@ -111,9 +107,9 @@ class ExperimentArgs:
     """the minimum value of the support"""
     v_max: float = 50.0
     """the maximum value of the support"""
-    std_min: float = 0.001
+    std_min: float = 0.01
     """the minimum value of the std"""
-    std_max: float = 0.05
+    std_max: float = 0.5
     """the maximum value of the std"""
     bootstrap: bool = True
     """whether to use bootstrap"""
@@ -158,12 +154,14 @@ class ExperimentArgs:
     """log to wandb"""
     log_interval: int = 100
     """log interval"""
-    checkpoint_interval: int = 1000
+    checkpoint_interval: int = 1000 
     """checkpoint interval"""
     load_checkpoint_path: str = ""
     """the path to the checkpoint"""
     resume_from_checkpoint: bool = False
     """whether to resume from checkpoint"""
+    save_buffer: bool = False
+    """whether to save the buffer"""
 
     clip_grad_norm: bool = False
     """whether to clip the gradient norm"""
@@ -238,6 +236,20 @@ def make_isaaclab_env(
             cfg=cfg,
             render_mode="rgb_array" if capture_video else None,
         )
+        if capture_video:
+            os.makedirs(
+                os.path.join(kwargs.get("run_dir", ""), "videos", "play"), exist_ok=True
+            )
+            video_kwargs = {
+                "video_folder": os.path.join(
+                    kwargs.get("run_dir", ""), "videos", "play"
+                ),
+                "step_trigger": lambda step: step % 1000 == 0,
+                "video_length": kwargs.get("video_length", 500),
+                "fps": 10,
+                "disable_logger": True,
+            }
+            env = gym.wrappers.RecordVideo(env, **video_kwargs)
         env = IsaacLabVecEnvWrapper(
             env,
             action_bounds=kwargs.get("action_bounds", None),
@@ -262,13 +274,13 @@ def main(args):
 
     scaler = GradScaler(enabled=amp_enabled and amp_dtype == torch.float16)
 
+    os.environ["WANDB_IGNORE_GLOBS"] = "*.pt,*.mp4"
     run = wandb.init(
         project="fast_td3",
         name=f"{run_name}",
         config=vars(args),
         save_code=True,
     )
-    os.environ["WANDB_IGNORE_GLOBS"] = "*.pt"
     # prepare local checkpoint directory inside the wandb run folder
     run_dir = run.dir
     ckpt_dir = os.path.join(run_dir, "checkpoints")
@@ -292,11 +304,16 @@ def main(args):
         args.seed,
         args.device,
         args.num_envs,
-        args.disable_fabric,
         args.capture_video,
+        args.disable_fabric,
         action_bounds=args.action_bounds,
         clip_actions=args.clip_actions,
+        run_dir=run_dir,
+        video_length=args.video_length,
+        video_interval=args.video_interval,
     )()
+    if args.capture_video:
+        envs.unwrapped.sim.set_camera_view(eye=[10, 10, 5], target=[0.0, 0.0, 0.0])
     print_dict(args, color="green", attrs=["bold"])
     n_obs = int(np.prod(envs.num_obs))
     n_act = int(np.prod(envs.num_actions))
@@ -718,21 +735,23 @@ def main(args):
         global_step=args.total_timesteps // args.num_envs,
         actor=actor,
         qnet=qnet,
-        rb=rb,
+        rb=rb if args.save_buffer else None,
         qnet_target=qnet_target,
         args=args,
         obs_normalizer=obs_normalizer,
         critic_obs_normalizer=None,
-        save_path=os.path.join(ckpt_dir, f"ckpt_final.pt"),
-        save_buffer_path=os.path.join(ckpt_dir, f"buffer_final.pt"),
+        save_path=os.path.join(ckpt_dir, "ckpt_final.pt"),
+        save_buffer_path=os.path.join(ckpt_dir, "buffer_final.pt")
+        if args.save_buffer
+        else None,
     )
     if args.log:
         artifact = wandb.Artifact(
             name="fast-td3-final-checkpoint",
             type="model",
-            description=f"Last TD3 with return",
+            description="Last TD3 with return",
         )
-    artifact.add_file(os.path.join(ckpt_dir, f"ckpt_final.pt"))
+    artifact.add_file(os.path.join(ckpt_dir, "ckpt_final.pt"))
     run.log_artifact(artifact)
 
     wandb.finish()

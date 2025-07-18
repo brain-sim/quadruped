@@ -1,8 +1,35 @@
-from .cnn_agent import CNNPPOAgent, CNNTD3Actor, CNNTD3Critic, CNNFastTD3Actor, CNNFastTD3Critic
-from .mlp_agent import MLPPPOAgent, MLPTD3Actor, MLPTD3Critic, MLPFastTD3Actor, MLPFastTD3Critic
+from .cnn_agent import (
+    CNNFastTD3Actor,
+    CNNFastTD3Critic,
+    CNNPPOAgent,
+    CNNTD3Actor,
+    CNNTD3Critic,
+)
+from .mlp_agent import (
+    MLPFastTD3Actor,
+    MLPFastTD3Critic,
+    MLPPPOAgent,
+    MLPTD3Actor,
+    MLPTD3Critic,
+)
 from .utils import layer_init
 
-__all__ = ["MLPPPOAgent", "CNNPPOAgent", "layer_init"]
+__all__ = [
+    "MLPPPOAgent",
+    "MLPTD3Actor",
+    "MLPTD3Critic",
+    "MLPFastTD3Actor",
+    "MLPFastTD3Critic",
+    "CNNPPOAgent",
+    "CNNTD3Actor",
+    "CNNTD3Critic",
+    "CNNFastTD3Actor",
+    "CNNFastTD3Critic",
+    "layer_init",
+    "AGENT_LOOKUP_BY_INPUT_TYPE",
+    "AGENT_LOOKUP_BY_ALGORITHM",
+]
+
 AGENT_LOOKUP_BY_INPUT_TYPE = {
     "image": {
         "ppo": CNNPPOAgent,

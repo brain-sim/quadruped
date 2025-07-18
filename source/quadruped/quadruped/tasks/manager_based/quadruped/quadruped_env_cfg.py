@@ -8,8 +8,6 @@
 import isaaclab.terrains as terrain_gen
 import isaaclab_tasks.manager_based.locomotion.velocity.mdp as velocity_mdp
 from isaaclab.envs import ManagerBasedEnv, mdp
-from isaaclab.envs.mdp.curriculums import modify_reward_weight
-from isaaclab.managers import CurriculumTermCfg as CurrTerm
 from isaaclab.managers import ObservationGroupCfg as ObsGroup
 from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import RewardTermCfg as RewTerm
@@ -19,15 +17,10 @@ from isaaclab.sensors import RayCasterCfg, patterns
 
 # Replace the terrain configuration completely
 from isaaclab.terrains.config.rough import ROUGH_TERRAINS_CFG
-from isaaclab.utils import configclass
+from isaaclab.utils import configclass, math
 from isaaclab.utils.noise import AdditiveUniformNoiseCfg as Unoise
 from isaaclab_tasks.manager_based.locomotion.velocity.config.spot.flat_env_cfg import (  # noqa: F401, F403
-    SpotCommandsCfg,
     SpotFlatEnvCfg,
-    SpotRewardsCfg,
-)
-from isaaclab_tasks.manager_based.locomotion.velocity.velocity_env_cfg import (
-    CurriculumCfg,
 )
 
 from .mdp import *  # noqa: F401, F403
@@ -38,48 +31,41 @@ __all__ = [
     "SpotFlatEnvCfgv2",
 ]
 
-
-@configclass
-class SpotFlatEnvCurriculumCfg(CurriculumCfg):
-    """Curriculum for the Spot MDP."""
-
-    zero_lin_hold = CurrTerm(
-        func=modify_reward_weight,
-        params={
-            "term_name": "zero_base_linear_velocity_penalty",
-            "weight": -10.0,
-            "num_steps": 25_000,
-        },
-    )
-
-
-@configclass
-class SpotRewardsCfgv2(SpotRewardsCfg):
-    """Spot velocity tracking with custom terrain pattern and center spawning."""
-
-    zero_base_linear_velocity_penalty = RewTerm(
-        func=zero_base_linear_velocity_penalty,
-        weight=-5.0,
-        params={"std": 2.0, "asset_cfg": SceneEntityCfg("robot")},
-    )
-
-    def __post_init__(self):
-        super().__post_init__()
-        self.base_angular_velocity.weight = 25.0
-        self.base_linear_velocity.weight = 25.0
-        self.gait.weight = 50.0
-        self.base_motion.weight = -2.0
-        self.base_orientation.weight = -3.0
-        self.foot_slip.weight = -2.0
-        self.air_time_variance.weight = -1.0
+COBBLESTONE_ROAD_CFG = terrain_gen.TerrainGeneratorCfg(
+    size=(8.0, 8.0),
+    border_width=20.0,
+    num_rows=9,
+    num_cols=21,
+    horizontal_scale=0.1,
+    vertical_scale=0.005,
+    slope_threshold=0.75,
+    difficulty_range=(0.0, 1.0),
+    use_cache=False,
+    sub_terrains={
+        "flat": terrain_gen.MeshPlaneTerrainCfg(proportion=0.2),
+        "random_rough": terrain_gen.HfRandomUniformTerrainCfg(
+            proportion=0.2, noise_range=(0.03, 0.10), noise_step=0.03, border_width=0.25
+        ),
+    },
+)
 
 
 @configclass
 class SpotFlatEnvCfgv2(SpotFlatEnvCfg):
     """Spot velocity tracking with custom terrain pattern and center spawning."""
 
-    rewards: SpotRewardsCfgv2 = SpotRewardsCfgv2()
-    curriculum: SpotFlatEnvCurriculumCfg = SpotFlatEnvCurriculumCfg()
+    def __post_init__(self):
+        super().__post_init__()
+        self.rewards.base_linear_velocity = RewTerm(
+            func=base_linear_velocity_reward,
+            weight=5.0,
+            params={"std": math.sqrt(1.0), "asset_cfg": SceneEntityCfg("robot")},
+        )
+
+        self.commands.base_velocity.rel_standing_envs = 0.2
+        self.commands.base_velocity.ranges.lin_vel_x = (-2.0, 4.5)
+
+        self.scene.terrain.terrain_generator = COBBLESTONE_ROAD_CFG
 
 
 # @configclass
