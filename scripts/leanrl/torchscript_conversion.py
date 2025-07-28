@@ -125,7 +125,7 @@ def convert_checkpoint_to_jit(
 
     else:
         # For PPO: single agent class
-        model = agent_classes(n_obs=n_obs, n_act=n_act, **model_kwargs)
+        model = agent_classes(n_obs=n_obs, n_act=n_act, **model_kwargs).to(device)
         print(f"Loading {algorithm} model with {agent_classes.__name__}")
 
     # Load state dict
@@ -162,7 +162,7 @@ def convert_checkpoint_to_jit(
     wrapper_model = ModelWithNormalizer(
         model,
         normalizer,
-        action_bounds=checkpoint["args"].get("action_bounds", 1.0),
+        action_bounds=checkpoint.get("args", {}).get("action_bounds", 1.0),
     )
     wrapper_model.eval()
 
@@ -261,6 +261,8 @@ def test_non_traced_model(
     else:
         model.load_state_dict(checkpoint)
 
+    # Move model to the correct device after loading state dict
+    model.to(device)
     model.eval()
 
     # Handle observation normalizer
@@ -280,8 +282,10 @@ def test_non_traced_model(
     wrapper_model = ModelWithNormalizer(
         model,
         normalizer,
-        action_bounds=checkpoint["args"].get("action_bounds", 1.0),
+        action_bounds=checkpoint.get("args", {}).get("action_bounds", 1.0),
     )
+    # Move wrapper model to the correct device
+    wrapper_model.to(device)
     wrapper_model.eval()
 
     # Run inference
@@ -391,8 +395,10 @@ def compare_models(
 
 @dataclass
 class Args:
-    checkpoint_path: str = "/home/user/cognitiverl/source/cognitiverl/cognitiverl/tasks/direct/custom_assets/spot_policy_test_v2.pt"
-    output_path: str = "/home/chandramouli/cognitiverl/source/cognitiverl/cognitiverl/tasks/direct/custom_assets/spot_policy_test_v2.pt"
+    checkpoint_path: str = (
+        "/home/chandramouli/quadruped/wandb/latest-run/files/checkpoints/ckpt_251904.pt"
+    )
+    output_path: str = "/tmp/spot_policy_test_v2.pt"
     algorithm: str = "fast_td3"
     obs_type: str = "state"
     num_eval_envs: int = 1
