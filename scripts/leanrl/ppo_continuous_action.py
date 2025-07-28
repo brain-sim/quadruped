@@ -1,6 +1,5 @@
 # docs and experiment results can be found at https://docs.cleanrl.dev/rl-algorithms/ppo/#ppo_continuous_actionpy
 import os
-import sys
 import time
 from dataclasses import asdict
 
@@ -11,13 +10,17 @@ import torch.nn as nn
 import torch.optim as optim
 import torchvision
 import tqdm
+from isaaclab.utils import configclass
 
 import wandb
-
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from isaaclab.utils import configclass
-from models import CNNPPOAgent, MLPPPOAgent
-from utils import load_args, print_dict, seed_everything, update_learning_rate_adaptive
+from scripts.models import AGENT_LOOKUP_BY_ALGORITHM
+from scripts.utils import (
+    load_args,
+    make_isaaclab_env,
+    print_dict,
+    seed_everything,
+    update_learning_rate_adaptive,
+)
 
 
 @configclass
@@ -102,16 +105,13 @@ class ExperimentArgs:
     measure_burnin: int = 3
 
     # Agent config
-    agent_type: str = "MLPPPOAgent"
+    obs_type: str = "state"
+    """the type of the observations"""
+    algorithm: str = "ppo"
+    """the algorithm to use"""
 
     checkpoint_interval: int = total_timesteps
     """environment steps between saving checkpoints."""
-    # play_interval: int = 3
-    # """environment steps between playing evaluation episodes during training."""
-    # run_play: bool = True
-    # """whether to play evaluation episodes during training."""
-    # run_best: bool = True
-    # """whether to run the best model after training."""
     num_eval_envs: int = 3
     """number of environments to run for evaluation/play."""
     num_eval_env_steps: int = 200
@@ -178,61 +178,6 @@ def make_env(env_id, idx, capture_video, run_name, gamma):
     return thunk
 
 
-def make_isaaclab_env(
-    task,
-    device,
-    num_envs,
-    capture_video,
-    disable_fabric,
-    log_dir=None,
-    video_length=200,
-    max_total_steps=None,
-    *args,
-    **kwargs,
-):
-    import isaaclab_tasks  # noqa: F401
-    import quadruped.tasks  # noqa: F401
-    from isaaclab_tasks.utils.parse_cfg import parse_env_cfg
-
-    # NOW IMPORT AFTER SimulationApp is initialized
-    from wrappers import IsaacLabVecEnvWrapper
-
-    def thunk():
-        cfg = parse_env_cfg(
-            task, device, num_envs=num_envs, use_fabric=not disable_fabric
-        )
-        env = gym.make(
-            task,
-            cfg=cfg,
-            render_mode="rgb_array"
-            if (capture_video and log_dir is not None)
-            else None,
-            max_total_steps=max_total_steps,
-        )
-        print_dict(
-            {"max_episode_steps": env.unwrapped.max_episode_length},
-            nesting=4,
-            color="green",
-            attrs=["bold"],
-        )
-        env = IsaacLabVecEnvWrapper(
-            env
-        )  # was earlier set to clip_actions=1.0 causing issues.
-
-        if capture_video and log_dir is not None:
-            video_kwargs = {
-                "video_folder": os.path.join(log_dir, "videos", "play"),
-                "step_trigger": lambda step: step == 0,
-                "video_length": video_length,
-                "disable_logger": True,
-            }
-            print_dict(video_kwargs, nesting=4)
-            env = gym.wrappers.RecordVideo(env, **video_kwargs)
-        return env
-
-    return thunk
-
-
 def main(args):
     print_dict(args, nesting=4, color="green", attrs=["bold"])
     run_name = f"{args.task}__{args.exp_name}__{args.seed}"
@@ -266,15 +211,16 @@ def main(args):
     # env setup
     envs = make_isaaclab_env(
         args.task,
+        args.seed,
         args.device,
         args.num_envs,
         args.capture_video,
         args.disable_fabric,
         max_total_steps=args.total_timesteps,
+        video_length=args.video_length,
     )()
     # TRY NOT TO MODIFY: seeding
     seed_everything(
-        envs,
         args.seed,
         use_torch=True,
         torch_deterministic=True,
@@ -287,10 +233,9 @@ def main(args):
         "only continuous action space is supported"
     )
 
-    if args.agent_type == "CNNPPOAgent":
-        agent = CNNPPOAgent(n_obs, n_act).to(device)
-    else:
-        agent = MLPPPOAgent(n_obs, n_act).to(device)
+    agent = AGENT_LOOKUP_BY_ALGORITHM[args.algorithm][args.obs_type](n_obs, n_act).to(
+        device
+    )
     optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
 
     # ALGO Logic: Storage setup
@@ -539,7 +484,7 @@ def main(args):
                 )
         learn_speed = time.time() - start_time
         step_pbar.set_description(
-            f"speed (sps) : {step_speed:3.1f}, time to update (s) : {learn_speed:3.1f}"
+            f"speed (sps) : {step_speed:3.1f}, time to update (s) : {learn_speed:2.2f}"
         )
         # Log the learning rate change
         if global_step_burnin is not None and iteration % args.log_interval == 0:

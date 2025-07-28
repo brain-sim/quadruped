@@ -392,7 +392,7 @@ def compare_models(
 @dataclass
 class Args:
     checkpoint_path: str = "/home/user/cognitiverl/source/cognitiverl/cognitiverl/tasks/direct/custom_assets/spot_policy_test_v2.pt"
-    output_path: str = "/home/user/cognitiverl/source/cognitiverl/cognitiverl/tasks/direct/custom_assets/spot_policy_test_v2.pt"
+    output_path: str = "/home/chandramouli/cognitiverl/source/cognitiverl/cognitiverl/tasks/direct/custom_assets/spot_policy_test_v2.pt"
     algorithm: str = "fast_td3"
     obs_type: str = "state"
     num_eval_envs: int = 1

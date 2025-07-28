@@ -17,10 +17,10 @@ from isaaclab.sensors import RayCasterCfg, patterns
 
 # Replace the terrain configuration completely
 from isaaclab.terrains.config.rough import ROUGH_TERRAINS_CFG
-from isaaclab.utils import configclass, math
+from isaaclab.utils import configclass
 from isaaclab.utils.noise import AdditiveUniformNoiseCfg as Unoise
-from isaaclab_tasks.manager_based.locomotion.velocity.config.spot.flat_env_cfg import (  # noqa: F401, F403
-    SpotFlatEnvCfg,
+from isaaclab_tasks.manager_based.locomotion.velocity.config.spot.flat_env_cfg import (
+    SpotFlatEnvCfg,  # noqa: F401, F403
 )
 
 from .mdp import *  # noqa: F401, F403
@@ -44,7 +44,10 @@ COBBLESTONE_ROAD_CFG = terrain_gen.TerrainGeneratorCfg(
     sub_terrains={
         "flat": terrain_gen.MeshPlaneTerrainCfg(proportion=0.2),
         "random_rough": terrain_gen.HfRandomUniformTerrainCfg(
-            proportion=0.2, noise_range=(0.03, 0.10), noise_step=0.03, border_width=0.25
+            proportion=0.2,
+            noise_range=(0.025, 0.075),
+            noise_step=0.025,
+            border_width=0.25,
         ),
     },
 )
@@ -56,16 +59,16 @@ class SpotFlatEnvCfgv2(SpotFlatEnvCfg):
 
     def __post_init__(self):
         super().__post_init__()
+
+        # -- TASK REWARDS (Positive) --
         self.rewards.base_linear_velocity = RewTerm(
             func=base_linear_velocity_reward,
             weight=5.0,
-            params={"std": math.sqrt(1.0), "asset_cfg": SceneEntityCfg("robot")},
+            params={
+                "std": 1.0,
+                "asset_cfg": SceneEntityCfg("robot"),
+            },
         )
-
-        self.commands.base_velocity.rel_standing_envs = 0.2
-        self.commands.base_velocity.ranges.lin_vel_x = (-2.0, 4.5)
-
-        self.scene.terrain.terrain_generator = COBBLESTONE_ROAD_CFG
 
 
 # @configclass

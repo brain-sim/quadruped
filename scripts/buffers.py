@@ -20,7 +20,14 @@ class TorchRLInfoLogger:
         self.total_logged = 0
 
     def update(
-        self, infos, obs_max=None, obs_min=None, action_max=None, action_min=None
+        self,
+        infos,
+        obs_max=None,
+        obs_min=None,
+        action_max=None,
+        action_min=None,
+        reward_max=None,
+        reward_min=None,
     ):
         """Update buffer with new info and transition metrics using TensorDict's efficient operations."""
         # Get current buffer index
@@ -91,6 +98,38 @@ class TorchRLInfoLogger:
             )
             self.log_buffer["action_min"][idx] = action_min_cpu
 
+        if reward_max is not None:
+            if "reward_max" not in self.log_buffer:
+                self.log_buffer["reward_max"] = torch.full(
+                    (self.buffer_size,),
+                    float("inf"),
+                    device=self.device,
+                    dtype=torch.float32,
+                )
+            # Convert to CPU if needed
+            reward_max_cpu = (
+                float(reward_max)
+                if isinstance(reward_max, (int, float))
+                else reward_max.cpu().item()
+            )
+            self.log_buffer["reward_max"][idx] = reward_max_cpu
+
+        if reward_min is not None:
+            if "reward_min" not in self.log_buffer:
+                self.log_buffer["reward_min"] = torch.full(
+                    (self.buffer_size,),
+                    float("inf"),
+                    device=self.device,
+                    dtype=torch.float32,
+                )
+            # Convert to CPU if needed
+            reward_min_cpu = (
+                float(reward_min)
+                if isinstance(reward_min, (int, float))
+                else reward_min.cpu().item()
+            )
+            self.log_buffer["reward_min"][idx] = reward_min_cpu
+
         # Process info logs
         if "log" in infos:
             log_data = infos["log"]
@@ -153,11 +192,20 @@ class TorchRLInfoLogger:
                     avg_value = compute_max(values)
                 elif key in ["action_min", "obs_min"]:
                     avg_value = compute_min(values)
+                elif key in ["reward_max", "reward_min"]:
+                    avg_value = compute_max(values)
                 else:
                     avg_value = compute_mean(values)
 
                 # Categorize based on key prefix or special metrics
-                if key in ["action_max", "action_min", "obs_max", "obs_min"]:
+                if key in [
+                    "action_max",
+                    "action_min",
+                    "obs_max",
+                    "obs_min",
+                    "reward_max",
+                    "reward_min",
+                ]:
                     averaged_logs[f"metrics/{key}"] = avg_value
                 elif key.startswith("Episode_Reward/"):
                     clean_key = key.replace("Episode_Reward/", "")
@@ -692,6 +740,7 @@ class SimpleReplayBufferOriginal(nn.Module):
         n_steps: int = 1,
         gamma: float = 0.99,
         device=None,
+        q_chunk: bool = False,
     ):
         """
         A simple replay buffer that stores transitions in a circular buffer.
@@ -715,6 +764,7 @@ class SimpleReplayBufferOriginal(nn.Module):
         self.gamma = gamma
         self.n_steps = n_steps
         self.device = device
+        self.q_chunk = q_chunk
 
         self.observations = torch.zeros(
             (n_env, buffer_size, n_obs), device=device, dtype=torch.float
@@ -950,6 +1000,19 @@ class SimpleReplayBufferOriginal(nn.Module):
                 1,
                 all_indices,
             )
+
+            if self.q_chunk:
+                all_act_indices = all_indices.unsqueeze(-1).expand(
+                    -1, -1, -1, self.n_act
+                )
+                actions = torch.gather(
+                    self.actions.unsqueeze(-2).expand(-1, -1, self.n_steps, -1),
+                    1,
+                    all_act_indices,
+                )
+                actions = actions.flatten(start_dim=2).reshape(
+                    self.n_env * batch_size, -1
+                )
 
             # Create masks for rewards *after* first done
             # This creates a cumulative product that zeroes out rewards after the first done

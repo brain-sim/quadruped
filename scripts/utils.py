@@ -2,8 +2,8 @@ import argparse
 import os
 import random
 from dataclasses import asdict, fields
-from typing import Union
 
+import gymnasium as gym
 import jax
 import numpy as np
 import torch
@@ -11,6 +11,49 @@ import torch.distributed as dist
 import torch.nn as nn
 import yaml
 from termcolor import colored
+
+
+def make_isaaclab_env(
+    task, seed, device, num_envs, capture_video, disable_fabric, **kwargs
+):
+    import isaaclab_tasks  # noqa: F401
+    import quadruped.tasks  # noqa: F401
+    from isaaclab_tasks.utils.parse_cfg import parse_env_cfg
+
+    from scripts.wrappers import IsaacLabVecEnvWrapper
+
+    def thunk():
+        cfg = parse_env_cfg(
+            task, device, num_envs=num_envs, use_fabric=not disable_fabric
+        )
+        cfg.seed = seed
+        env = gym.make(
+            task,
+            cfg=cfg,
+            render_mode="rgb_array" if capture_video else None,
+        )
+        if capture_video:
+            os.makedirs(
+                os.path.join(kwargs.get("run_dir", ""), "videos", "play"), exist_ok=True
+            )
+            video_kwargs = {
+                "video_folder": os.path.join(
+                    kwargs.get("run_dir", ""), "videos", "play"
+                ),
+                "step_trigger": lambda step: step % 1000 == 0,
+                "video_length": kwargs.get("video_length", 500),
+                "fps": 10,
+                "disable_logger": True,
+            }
+            env = gym.wrappers.RecordVideo(env, **video_kwargs)
+        env = IsaacLabVecEnvWrapper(
+            env,
+            action_bounds=kwargs.get("action_bounds", None),
+            clip_actions=kwargs.get("clip_actions", None),
+        )
+        return env
+
+    return thunk
 
 
 def seed_everything(

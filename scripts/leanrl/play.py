@@ -1,6 +1,5 @@
 # docs and experiment results can be found at https://docs.cleanrl.dev/rl-algorithms/ppo/#ppo_continuous_actionpy
 import os
-import sys
 from dataclasses import asdict
 from typing import Optional
 
@@ -127,7 +126,6 @@ def make_isaaclab_env(
     import isaaclab_tasks  # noqa: F401
     import quadruped.tasks  # noqa: F401
     from isaaclab_tasks.utils.parse_cfg import parse_env_cfg
-    from wrappers import IsaacLabVecEnvWrapper
 
     from scripts.wrappers import IsaacLabVecEnvWrapper
 

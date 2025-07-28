@@ -27,6 +27,7 @@ from scripts.utils import (
     EmpiricalNormalization,
     RewardNormalizer,
     load_args,
+    make_isaaclab_env,
     mark_step,
     print_dict,
     save_params,
@@ -80,14 +81,14 @@ class ExperimentArgs:
     """the learning rate of the actor"""
     critic_learning_rate: float = 3e-4
     """the learning rate of the optimizer"""
-    buffer_size: int = 1024 * 5
+    buffer_size: int = 1024 * 5  #
     """the replay memory buffer size"""
     buffer_device: str = "cpu"
     """the device of the replay memory buffer"""
     gamma: float = 0.99
     """the discount factor gamma"""
     tau: float = 0.1
-    """target smoothing coefficient (default: 0.1)"""
+    """target smoothing coefficient (default: 0.05)"""
     batch_size: int = 32768
     """the batch size of sample from the reply memory"""
     policy_noise: float = 0.001
@@ -105,11 +106,11 @@ class ExperimentArgs:
     """the number of atoms for the distributional critic"""
     v_min: float = -50.0
     """the minimum value of the support"""
-    v_max: float = 50.0
+    v_max: float = 200.0
     """the maximum value of the support"""
-    std_min: float = 0.01
+    std_min: float = 0.001
     """the minimum value of the std"""
-    std_max: float = 0.5
+    std_max: float = 0.4
     """the maximum value of the std"""
     bootstrap: bool = True
     """whether to use bootstrap"""
@@ -130,7 +131,9 @@ class ExperimentArgs:
     reward_normalization: bool = False
     """whether to normalize the rewards"""
 
-    compile: bool = True
+    q_chunk: bool = False
+    """whether to use q chunk"""
+    compile: bool = False
     """use torch.compile"""
     compile_mode: str = "reduce-overhead"
     """the mode of the torch.compile"""
@@ -154,7 +157,7 @@ class ExperimentArgs:
     """log to wandb"""
     log_interval: int = 100
     """log interval"""
-    checkpoint_interval: int = 1000 
+    checkpoint_interval: int = 1000
     """checkpoint interval"""
     load_checkpoint_path: str = ""
     """the path to the checkpoint"""
@@ -212,49 +215,6 @@ def make_env(task, seed, idx, capture_video, run_name):
             env = gym.make(task)
         env = gym.wrappers.RecordEpisodeStatistics(env)
         env.action_space.seed(seed)
-        return env
-
-    return thunk
-
-
-def make_isaaclab_env(
-    task, seed, device, num_envs, capture_video, disable_fabric, **kwargs
-):
-    import isaaclab_tasks  # noqa: F401
-    import quadruped.tasks  # noqa: F401
-    from isaaclab_tasks.utils.parse_cfg import parse_env_cfg
-
-    from scripts.wrappers import IsaacLabVecEnvWrapper
-
-    def thunk():
-        cfg = parse_env_cfg(
-            task, device, num_envs=num_envs, use_fabric=not disable_fabric
-        )
-        cfg.seed = seed
-        env = gym.make(
-            task,
-            cfg=cfg,
-            render_mode="rgb_array" if capture_video else None,
-        )
-        if capture_video:
-            os.makedirs(
-                os.path.join(kwargs.get("run_dir", ""), "videos", "play"), exist_ok=True
-            )
-            video_kwargs = {
-                "video_folder": os.path.join(
-                    kwargs.get("run_dir", ""), "videos", "play"
-                ),
-                "step_trigger": lambda step: step % 1000 == 0,
-                "video_length": kwargs.get("video_length", 500),
-                "fps": 10,
-                "disable_logger": True,
-            }
-            env = gym.wrappers.RecordVideo(env, **video_kwargs)
-        env = IsaacLabVecEnvWrapper(
-            env,
-            action_bounds=kwargs.get("action_bounds", None),
-            clip_actions=kwargs.get("clip_actions", None),
-        )
         return env
 
     return thunk
@@ -341,6 +301,16 @@ def main(args):
     else:
         reward_normalizer = nn.Identity()
 
+    # Set horizon for q_chunking
+    horizon = 1
+    if args.q_chunk:
+        horizon = args.num_steps
+        print_dict(
+            f"Q-chunking enabled with horizon: {horizon}",
+            color="cyan",
+            attrs=["bold"],
+        )
+
     actor_class, critic_class = AGENT_LOOKUP_BY_ALGORITHM[args.algorithm][args.obs_type]
     actor = actor_class(
         n_obs=n_obs,
@@ -351,6 +321,7 @@ def main(args):
         std_max=args.std_max,
         device=device,
         hidden_dims=args.actor_hidden_dims,
+        horizon=horizon,
     )
     print(f"actor : {actor}")
     actor_detach = actor_class(
@@ -362,6 +333,7 @@ def main(args):
         std_max=args.std_max,
         device=device,
         hidden_dims=args.actor_hidden_dims,
+        horizon=horizon,
     )
     qnet = critic_class(
         n_obs=n_obs,
@@ -371,6 +343,7 @@ def main(args):
         v_min=args.v_min,
         v_max=args.v_max,
         hidden_dims=args.critic_hidden_dims,
+        horizon=horizon,
     )
     print(f"qnet : {qnet}")
 
@@ -383,6 +356,7 @@ def main(args):
         v_min=args.v_min,
         v_max=args.v_max,
         hidden_dims=args.critic_hidden_dims,
+        horizon=horizon,
     )
     resume_global_step = 0
     if args.resume_from_checkpoint:
@@ -443,7 +417,8 @@ def main(args):
         n_critic_obs=n_obs,
         asymmetric_obs=False,
         playground_mode=False,
-        n_steps=args.num_steps,
+        q_chunk=args.q_chunk,
+        n_steps=args.num_steps,  # Keep original n_steps for n-step returns
         gamma=args.gamma,
         device=buffer_device,
     )
@@ -458,6 +433,38 @@ def main(args):
 
     policy_noise = args.policy_noise
     noise_clip = args.noise_clip
+
+    def rollout(actions):
+        # TRY NOT TO MODIFY: execute the game and log data.
+        next_obs, rewards, dones, infos = envs.step(actions.float())
+
+        # TRY NOT TO MODIFY: save data to reply buffer; handle `final_observation`
+        real_next_obs = next_obs.clone()
+        transition = TensorDict(
+            observations=obs,
+            next_observations=real_next_obs,
+            actions=torch.as_tensor(actions, device=device, dtype=torch.float),
+            rewards=torch.as_tensor(rewards, device=device, dtype=torch.float),
+            terminations=infos["terminations"].long(),
+            time_outs=infos["time_outs"].long(),
+            dones=dones.long(),
+            batch_size=(envs.num_envs,),
+            device=buffer_device,
+        )
+
+        info_logger.update(
+            infos,
+            obs_max=transition["observations"].max().item(),
+            obs_min=transition["observations"].min().item(),
+            action_max=transition["actions"].max().item() * args.action_bounds,
+            action_min=transition["actions"].min().item() * args.action_bounds,
+            reward_max=transition["rewards"].max().item(),
+            reward_min=transition["rewards"].min().item(),
+        )
+
+        # Store transition
+        rb.extend(transition)
+        return next_obs
 
     def update_main(data, log_dict):
         with autocast(
@@ -475,6 +482,10 @@ def main(args):
             # Ensure rewards and dones have correct dimensions for vmap
             dones = dones.bool()
             time_outs = time_outs.bool()
+
+            # For q_chunking: target_q(s_t, a_{t:t+h}) = Σ_{t'=t+1}^{t'=h} γ^{t'-t} * r_{t'} + frozen_q(s_{t+h}, a_{t+h:t+2h})
+            # The n-step buffer already gives us the discounted sum of rewards
+            # Original TD3 logic for non-chunked version
             clipped_noise = torch.randn_like(actions)
             clipped_noise = clipped_noise.mul(policy_noise).clamp(
                 -noise_clip, noise_clip
@@ -602,23 +613,28 @@ def main(args):
     # TRY NOT TO MODIFY: start the game
     obs, _ = envs.reset()
     args.num_iterations = args.total_timesteps // args.num_envs
+    actual_iterations = (
+        args.num_iterations - resume_global_step + horizon - 1
+    ) // horizon
     pbar = tqdm.tqdm(
-        range(resume_global_step, args.num_iterations),
+        range(resume_global_step, args.num_iterations, horizon),
         initial=resume_global_step,
-        total=args.num_iterations,
+        total=actual_iterations,
         desc=f"Resuming from step {resume_global_step}",
     )
     start_time = None
     dones = None
-    max_ep_ret = -float("inf")
+    measure_burnin = None
     desc = ""
-    log_transition = {}
-    info_logger = TorchRLInfoLogger(device="cpu", buffer_size=1000)
+    info_logger = TorchRLInfoLogger(device="cpu", buffer_size=24)
 
     for global_step in pbar:
         mark_step()
         out_main = TensorDict()
-        if global_step == args.measure_burnin + resume_global_step:
+        if (
+            global_step >= args.measure_burnin + resume_global_step
+            and measure_burnin is None
+        ):
             start_time = time.time()
             measure_burnin = global_step
 
@@ -628,48 +644,49 @@ def main(args):
             autocast(device_type=amp_device_type, dtype=amp_dtype, enabled=amp_enabled),
         ):
             norm_obs = normalize_obs(obs)
-            actions = policy(obs=norm_obs, dones=dones)
+            if args.q_chunk:
+                actions = policy(obs=norm_obs, dones=dones)
+                actions = actions.reshape(actions.shape[0], horizon, -1)
+            else:
+                actions = policy(obs=norm_obs, dones=dones)
             actions = torch.clamp(actions, action_low, action_high)
 
-        # TRY NOT TO MODIFY: execute the game and log data.
-        next_obs, rewards, dones, infos = envs.step(actions.float())
-
-        # TRY NOT TO MODIFY: save data to reply buffer; handle `final_observation`
-        real_next_obs = next_obs.clone()
-        transition = TensorDict(
-            observations=obs,
-            next_observations=real_next_obs,
-            actions=torch.as_tensor(actions, device=device, dtype=torch.float),
-            rewards=torch.as_tensor(rewards, device=device, dtype=torch.float),
-            terminations=infos["terminations"].long(),
-            time_outs=infos["time_outs"].long(),
-            dones=dones.long(),
-            batch_size=(envs.num_envs,),
-            device=buffer_device,
-        )
-
-        info_logger.update(
-            infos,
-            transition["observations"].max().item(),
-            transition["observations"].min().item(),
-            transition["actions"].max().item() * args.action_bounds,
-            transition["actions"].min().item() * args.action_bounds,
-        )
-
         # TRY NOT TO MODIFY: CRUCIAL step easy to overlook
-        obs = next_obs
+        obs = rollout(actions[:, 0] if args.q_chunk else actions)
+        log_infos = info_logger.get_averaged_logs()  # TODO
+        info_logger.reset()
+        wandb.log(
+            {
+                **log_infos,
+            },
+            step=global_step * args.num_envs,
+        )
+        if args.q_chunk:
+            for i in range(1, horizon):
+                obs = rollout(actions[:, i])
+                log_infos = info_logger.get_averaged_logs()  # TODO
+                info_logger.reset()
+                if i < horizon - 1:
+                    wandb.log(
+                        {
+                            **log_infos,
+                        },
+                        step=(global_step + i) * args.num_envs,
+                    )
 
         # ALGO LOGIC: training.
-        if global_step >= args.measure_burnin + resume_global_step:
+        if (
+            global_step >= args.measure_burnin + resume_global_step
+            and measure_burnin is not None
+        ):
             speed = (
                 (global_step - measure_burnin)
                 * args.num_envs
                 / (time.time() - start_time)
             )
-        rb.extend(transition)
         if global_step > args.learning_starts:
             update_start_time = time.time()
-            for i in range(args.num_updates):
+            for i in range(args.num_updates * horizon):
                 data = rb.sample(max(1, args.batch_size // args.num_envs))
                 data["observations"] = normalize_obs(data["observations"])
                 data["next_observations"] = normalize_obs(data["next_observations"])
@@ -697,7 +714,6 @@ def main(args):
                 info_logger.reset()
                 with torch.no_grad():
                     logs = {
-                        **log_transition,
                         **log_infos,
                     }
                     logs.update({k: v.mean() for k, v in out_main.items()})
@@ -706,7 +722,9 @@ def main(args):
                         "speed": speed,
                         **logs,
                     },
-                    step=global_step * args.num_envs,
+                    step=(global_step + horizon - 1) * args.num_envs
+                    if args.q_chunk
+                    else global_step * args.num_envs,
                 )
 
             if (
@@ -727,7 +745,10 @@ def main(args):
             actor_scheduler.step()
             q_scheduler.step()
 
-        if global_step >= args.measure_burnin + resume_global_step:
+        if (
+            global_step >= args.measure_burnin + resume_global_step
+            and measure_burnin is not None
+        ):
             pbar.set_description(f"{speed: 4.4f} sps, " + desc)
 
     envs.close()

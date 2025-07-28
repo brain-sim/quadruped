@@ -65,3 +65,23 @@ def base_linear_velocity_reward(
         (target - asset.data.root_lin_vel_b[:, :2]), dim=1
     )
     return torch.exp(-lin_vel_error / std**2)
+
+
+def target_height_reward(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg,
+    default_spot_height: float = 0.55,
+    height_margin: float = 0.05,
+    std: float = 0.05,
+) -> torch.Tensor:
+    """Reward for tracking the target height."""
+    asset: RigidObject = env.scene[asset_cfg.name]
+    height_error = torch.abs(
+        asset.data.root_pos_w[..., 2] - asset.data.default_root_state[..., 2]
+    )
+    height_error = torch.where(
+        (height_error > height_margin),
+        height_error,
+        torch.zeros_like(height_error),
+    )
+    return torch.exp(-height_error / std)

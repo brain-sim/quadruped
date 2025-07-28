@@ -38,6 +38,19 @@ class MLPPPOAgent(BaseAgent):
             raise ValueError(f"Invalid noise_std_type: {noise_std_type}")
 
         Normal.set_default_validate_args(False)
+        self.actor = self.build_networks(
+            input_dim=n_obs,
+            output_dim=n_act,
+            hidden_dims=actor_hidden_dims,
+            activation=activation,
+            output_activation=output_activation,
+        )
+        self.critic = self.build_networks(
+            input_dim=n_obs,
+            output_dim=1,
+            hidden_dims=critic_hidden_dims,
+            activation=activation,
+        )
 
         # Move to device and set precision
         self.to(self.device, self.dtype)
@@ -263,14 +276,16 @@ class MLPFastTD3Critic(nn.Module):
         num_atoms: int,
         v_min: float,
         v_max: float,
+        horizon: int = 1,
         hidden_dims: list[int] = [512, 256, 128],
         activation: type[nn.Module] = nn.ReLU,
         device: torch.device = None,
     ):
         super().__init__()
+        self.horizon = horizon
         self.qnet1 = DistributionalQNetwork(
             n_obs=n_obs,
-            n_act=n_act,
+            n_act=n_act * horizon,
             num_atoms=num_atoms,
             v_min=v_min,
             v_max=v_max,
@@ -280,7 +295,7 @@ class MLPFastTD3Critic(nn.Module):
         )
         self.qnet2 = DistributionalQNetwork(
             n_obs=n_obs,
-            n_act=n_act,
+            n_act=n_act * horizon,
             num_atoms=num_atoms,
             v_min=v_min,
             v_max=v_max,
@@ -341,6 +356,7 @@ class MLPFastTD3Actor(nn.Module):
         n_act: int,
         num_envs: int,
         init_scale: float,
+        horizon: int = 1,
         hidden_dims: list[int] = [512, 256, 128],
         activation: type[nn.Module] = nn.ReLU,
         output_activation: type[nn.Module] | None = nn.Tanh,
@@ -350,6 +366,7 @@ class MLPFastTD3Actor(nn.Module):
     ):
         super().__init__()
         self.n_act = n_act
+        self.horizon = horizon
         actor_layers = []
         for i in range(len(hidden_dims)):
             if i == 0:
@@ -360,7 +377,7 @@ class MLPFastTD3Actor(nn.Module):
         self.net = nn.Sequential(*actor_layers)
         self.net.to(device)
         self.fc_mu = nn.Sequential(
-            nn.Linear(hidden_dims[-1], n_act),
+            nn.Linear(hidden_dims[-1], n_act * horizon),
             output_activation() if output_activation is not None else nn.Identity(),
         )
         nn.init.normal_(self.fc_mu[0].weight, 0.0, init_scale)
