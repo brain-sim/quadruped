@@ -33,7 +33,7 @@ class EnvArgs:
     """the number of parallel environments to simulate"""
     seed: int = 1
     """seed of the environment"""
-    capture_video: bool = True
+    capture_video: bool = False
     """whether to capture videos of the agent performances (check out `videos` folder)"""
     video: bool = False
     """record videos during training"""
