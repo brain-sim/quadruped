@@ -69,7 +69,7 @@ class ExperimentArgs:
     device: str = "cuda:0"
     """device to use for training"""
 
-    checkpoint_path: str = "/home/chandramouli/quadruped/wandb/run-20250701_143749-04yfv2oo/files/checkpoints/ckpt_1179648000.pt"
+    checkpoint_path: str = "/home/chandramouli/quadruped/wandb/offline-run-20250728_102701-9v9a8qxm/files/checkpoints/ckpt_251904.pt"
     """path to the checkpoint to load"""
     num_eval_envs: int = 32
     """number of environments to run for evaluation/play."""
@@ -186,8 +186,8 @@ def main(args):
     checkpoint = torch.load(
         args.checkpoint_path, map_location=device, weights_only=False
     )
-    print(checkpoint["args"]["clip_actions"])
-    print(checkpoint["args"]["action_bounds"])
+    print(checkpoint.get("args", {}).get("clip_actions", None))
+    print(checkpoint.get("args", {}).get("action_bounds", None))
     eval_envs = make_isaaclab_env(
         args.task,
         args.seed,
@@ -196,8 +196,8 @@ def main(args):
         args.capture_video,
         args.disable_fabric,
         log_dir=run_dir,
-        clip_actions=checkpoint["args"]["clip_actions"],
-        action_bounds=checkpoint["args"]["action_bounds"],
+        clip_actions=checkpoint.get("args", {}).get("clip_actions", None),
+        action_bounds=checkpoint.get("args", {}).get("action_bounds", None),
     )()
 
     # Set camera eye position to (0, 0, 45) looking at origin
@@ -216,8 +216,10 @@ def main(args):
             n_act,
             num_envs=args.num_eval_envs,
             device=device,
-            init_scale=checkpoint["args"]["init_scale"],
-            hidden_dims=checkpoint["args"]["actor_hidden_dims"],
+            init_scale=checkpoint.get("args", {}).get("init_scale", 1.0),
+            hidden_dims=checkpoint.get("args", {}).get(
+                "actor_hidden_dims", [512, 256, 128]
+            ),
         )
     else:
         actor_class = agent_class
@@ -265,7 +267,10 @@ def main(args):
 
         pbar = tqdm.tqdm(total=args.num_eval_env_steps)
         while step < args.num_eval_env_steps and not done.all():
-            obs = normalize_obs(obs, update=False)
+            if "obs_normalizer_state" in checkpoint.keys():
+                obs = normalize_obs(obs, update=False)
+            else:
+                obs = normalize_obs(obs)
             if hasattr(play_agent, "get_action"):
                 action = play_agent.get_action(obs)
             else:
