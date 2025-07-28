@@ -110,7 +110,7 @@ class ExperimentArgs:
     algorithm: str = "ppo"
     """the algorithm to use"""
 
-    checkpoint_interval: int = total_timesteps
+    checkpoint_interval: int = 1000
     """environment steps between saving checkpoints."""
     num_eval_envs: int = 3
     """number of environments to run for evaluation/play."""
@@ -217,7 +217,9 @@ def main(args):
         args.capture_video,
         args.disable_fabric,
         max_total_steps=args.total_timesteps,
+        run_dir=run_dir,
         video_length=args.video_length,
+        video_interval=args.video_interval,
     )()
     # TRY NOT TO MODIFY: seeding
     seed_everything(
