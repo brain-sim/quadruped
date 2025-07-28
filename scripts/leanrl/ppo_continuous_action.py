@@ -110,7 +110,7 @@ class ExperimentArgs:
     algorithm: str = "ppo"
     """the algorithm to use"""
 
-    checkpoint_interval: int = 1000
+    checkpoint_interval: int = 1000 // num_steps
     """environment steps between saving checkpoints."""
     num_eval_envs: int = 3
     """number of environments to run for evaluation/play."""
@@ -221,6 +221,8 @@ def main(args):
         video_length=args.video_length,
         video_interval=args.video_interval,
     )()
+    if args.capture_video:
+        envs.unwrapped.sim.set_camera_view(eye=[10, 10, 5], target=[0.0, 0.0, 0.0])
     # TRY NOT TO MODIFY: seeding
     seed_everything(
         args.seed,
