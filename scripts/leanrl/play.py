@@ -69,7 +69,7 @@ class ExperimentArgs:
     device: str = "cuda:0"
     """device to use for training"""
 
-    checkpoint_path: str = "/home/chandramouli/quadruped/wandb/offline-run-20250728_102701-9v9a8qxm/files/checkpoints/ckpt_251904.pt"
+    checkpoint_path: str = "/home/chandramouli/quadruped/wandb/run-20250725_104057-pw50mjqg/files/checkpoints/ckpt_27000.pt"
     """path to the checkpoint to load"""
     num_eval_envs: int = 32
     """number of environments to run for evaluation/play."""
@@ -208,12 +208,15 @@ def main(args):
     assert isinstance(eval_envs.action_space, gym.spaces.Box), (
         "only continuous action space is supported"
     )
+    num_steps = checkpoint.get("args", {}).get("num_steps", 1)
+    q_chunk = checkpoint.get("args", {}).get("q_chunk", False)
     agent_class = AGENT_LOOKUP_BY_ALGORITHM[args.algorithm][args.obs_type]
     if isinstance(agent_class, tuple) or isinstance(agent_class, list):
         actor, critic = agent_class
+        agent_act = n_act if not q_chunk else n_act * num_steps
         agent = actor(
             n_obs,
-            n_act,
+            agent_act,
             num_envs=args.num_eval_envs,
             device=device,
             init_scale=checkpoint.get("args", {}).get("init_scale", 1.0),
@@ -253,6 +256,13 @@ def main(args):
     agent.to(device)
     agent.eval()
 
+    def get_normalized_obs(obs):
+        if "obs_normalizer_state" in checkpoint.keys():
+            obs = normalize_obs(obs, update=False)
+        else:
+            obs = normalize_obs(obs)
+        return obs
+
     @torch.no_grad()
     @autocast(device_type=amp_device_type, dtype=amp_dtype, enabled=amp_enabled)
     def run_play(play_agent, mode="play"):
@@ -260,6 +270,26 @@ def main(args):
         obs, _ = eval_envs.reset()
         step, global_step = 0, 0
         done = torch.zeros(args.num_eval_envs, dtype=torch.bool)
+        action_chunk = None
+
+        def get_action(obs):
+            if hasattr(play_agent, "get_action"):
+                action = play_agent.get_action(obs)
+            else:
+                action = play_agent(obs)
+            return action
+
+        def get_and_index_action(obs, step):
+            nonlocal action_chunk
+            if q_chunk and num_steps > 1:
+                action_index = step % num_steps
+                if action_index == 0:
+                    action_chunk = get_action(obs)
+                return action_chunk[
+                    :, action_index * n_act : (action_index + 1) * n_act
+                ]
+            else:
+                return get_action(obs)
 
         # Create video directory
         video_dir = os.path.join(run_dir, "videos", "play")
@@ -267,14 +297,8 @@ def main(args):
 
         pbar = tqdm.tqdm(total=args.num_eval_env_steps)
         while step < args.num_eval_env_steps and not done.all():
-            if "obs_normalizer_state" in checkpoint.keys():
-                obs = normalize_obs(obs, update=False)
-            else:
-                obs = normalize_obs(obs)
-            if hasattr(play_agent, "get_action"):
-                action = play_agent.get_action(obs)
-            else:
-                action = play_agent(obs)
+            norm_obs = get_normalized_obs(obs)
+            action = get_and_index_action(norm_obs, step)
             obs, _, done, _ = eval_envs.step(action)
             step += 1
             global_step += args.num_eval_envs

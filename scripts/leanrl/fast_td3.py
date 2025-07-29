@@ -81,7 +81,7 @@ class ExperimentArgs:
     """the learning rate of the actor"""
     critic_learning_rate: float = 3e-4
     """the learning rate of the optimizer"""
-    buffer_size: int = 1024 * 5  #
+    buffer_size: int = 256  # 1024 * 5
     """the replay memory buffer size"""
     buffer_device: str = "cpu"
     """the device of the replay memory buffer"""
@@ -104,9 +104,9 @@ class ExperimentArgs:
 
     num_atoms: int = 251
     """the number of atoms for the distributional critic"""
-    v_min: float = -50.0
+    v_min: float = -25.0
     """the minimum value of the support"""
-    v_max: float = 200.0
+    v_max: float = 100.0
     """the maximum value of the support"""
     std_min: float = 0.001
     """the minimum value of the std"""
@@ -649,6 +649,7 @@ def main(args):
                 actions = actions.reshape(actions.shape[0], horizon, -1)
             else:
                 actions = policy(obs=norm_obs, dones=dones)
+            actions += torch.randn_like(actions) * 0.01 * (1.0 - global_step / 1000000)
             actions = torch.clamp(actions, action_low, action_high)
 
         # TRY NOT TO MODIFY: CRUCIAL step easy to overlook

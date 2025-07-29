@@ -93,9 +93,14 @@ def convert_checkpoint_to_jit(
         )
 
         # Initialize actor with required parameters
+        agent_act = (
+            n_act
+            if not checkpoint.get("args", {}).get("q_chunk", False)
+            else n_act * checkpoint.get("args", {}).get("num_steps", 1)
+        )
         actor_params = {
             "n_obs": n_obs,
-            "n_act": n_act,
+            "n_act": agent_act,
             "num_envs": num_eval_envs,
             "device": torch.device(device),
             **model_kwargs,
@@ -217,9 +222,14 @@ def test_non_traced_model(
 
     if isinstance(agent_classes, (list, tuple)):
         actor_cls, critic_cls = agent_classes
+        agent_act = (
+            n_act
+            if not checkpoint.get("args", {}).get("q_chunk", False)
+            else n_act * checkpoint.get("args", {}).get("num_steps", 1)
+        )
         actor_params = {
             "n_obs": n_obs,
-            "n_act": n_act,
+            "n_act": agent_act,
             "num_envs": num_eval_envs,
             "device": torch.device(device),
             **model_kwargs,
@@ -395,10 +405,8 @@ def compare_models(
 
 @dataclass
 class Args:
-    checkpoint_path: str = (
-        "/home/chandramouli/quadruped/wandb/latest-run/files/checkpoints/ckpt_251904.pt"
-    )
-    output_path: str = "/tmp/spot_policy_test_v2.pt"
+    checkpoint_path: str = "/home/chandramouli/quadruped/wandb/run-20250725_104057-pw50mjqg/files/checkpoints/ckpt_27000.pt"
+    output_path: str = "/tmp/fast_td3_low_noise_gait.pt"
     algorithm: str = "fast_td3"
     obs_type: str = "state"
     num_eval_envs: int = 1

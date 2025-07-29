@@ -383,12 +383,14 @@ class MLPFastTD3Actor(nn.Module):
         nn.init.normal_(self.fc_mu[0].weight, 0.0, init_scale)
         nn.init.constant_(self.fc_mu[0].bias, 0.0)
         self.fc_mu.to(device)
+        self.std = nn.Parameter(torch.ones(1, device=device) * std_max)
+
         noise_scales = (
             torch.rand(num_envs, 1, device=device) * (std_max - std_min) + std_min
         )
         self.register_buffer("noise_scales", noise_scales)
-
         self.register_buffer("std_min", torch.as_tensor(std_min, device=device))
+
         self.register_buffer("std_max", torch.as_tensor(std_max, device=device))
         self.n_envs = num_envs
         self.device = device
@@ -399,26 +401,10 @@ class MLPFastTD3Actor(nn.Module):
         return x
 
     def explore(
-        self, obs: torch.Tensor, dones: torch.Tensor = None, deterministic: bool = False
+        self,
+        obs: torch.Tensor,
+        dones: torch.Tensor | None = None,
+        deterministic: bool = False,
     ) -> torch.Tensor:
-        # If dones is provided, resample noise for environments that are done
-        if dones is not None and dones.sum() > 0:
-            # Generate new noise scales for done environments (one per environment)
-            new_scales = (
-                torch.rand(self.n_envs, 1, device=obs.device)
-                * (self.std_max - self.std_min)
-                + self.std_min
-            )
-
-            # Update only the noise scales for environments that are done
-            dones_view = dones.view(-1, 1) > 0
-            self.noise_scales.copy_(
-                torch.where(dones_view, new_scales, self.noise_scales)
-            )
-
         act = self(obs)
-        if deterministic:
-            return act
-
-        noise = torch.randn_like(act) * self.noise_scales
-        return act + noise
+        return act
