@@ -75,7 +75,7 @@ class MLPPPOAgent(BaseAgent):
             action_std = torch.clamp(action_std, -20.0, 2.0)
             action_std = torch.exp(action_std)
         elif self.noise_std_type == "scalar":
-            action_std = F.softplus(action_std)
+            action_std = torch.clamp(action_std, min=1e-9)
 
         dist = Normal(action_mean, action_std)
         if action is None:

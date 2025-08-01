@@ -75,8 +75,7 @@ def convert_checkpoint_to_jit(
         Traced TorchScript model
     """
     # Load checkpoint
-    checkpoint = torch.load(checkpoint_path, map_location=device)
-
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
     # Extract model parameters from checkpoint args
     args = checkpoint.get("args", {})
     n_obs = args.get("observation_space", 48)  # Default for Spot
@@ -210,7 +209,7 @@ def test_non_traced_model(
         Output from the non-traced model
     """
     # Load checkpoint
-    checkpoint = torch.load(checkpoint_path, map_location=device)
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
 
     # Extract model parameters from checkpoint args
     args = checkpoint.get("args", {})
@@ -406,8 +405,8 @@ def compare_models(
 @dataclass
 class Args:
     checkpoint_path: str = "/home/chandramouli/quadruped/wandb/run-20250725_104057-pw50mjqg/files/checkpoints/ckpt_27000.pt"
-    output_path: str = "/tmp/fast_td3_low_noise_gait.pt"
-    algorithm: str = "fast_td3"
+    output_path: str = "/tmp/ppo_straight_walk.pt"
+    algorithm: str = "ppo"
     obs_type: str = "state"
     num_eval_envs: int = 1
     device: str = "cpu"
