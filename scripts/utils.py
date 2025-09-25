@@ -4,12 +4,12 @@ import random
 from dataclasses import asdict, fields
 
 import gymnasium as gym
-import jax
 import numpy as np
 import torch
 import torch.distributed as dist
 import torch.nn as nn
 import yaml
+from tensordict import TensorDict
 from termcolor import colored
 
 
@@ -77,6 +77,8 @@ def seed_everything(
         if torch_benchmark:
             torch.backends.cudnn.benchmark = True
     if use_jax:
+        import jax
+
         key = jax.random.PRNGKey(seed)
         return key
 
@@ -655,3 +657,82 @@ def adjust_noise_scales(state_dict, agent, num_eval_envs):
                 # Take the first num_eval_envs from the checkpoint
                 state_dict["noise_scales"] = checkpoint_noise_scales[:num_eval_envs]
     return state_dict
+
+
+def unpad_trajectories(trajectories, masks):
+    """Does the inverse operation of  split_and_pad_trajectories()"""
+    # Need to transpose before and after the masking to have proper reshaping
+    return (
+        trajectories.transpose(1, 0)[masks.transpose(1, 0)]
+        .view(-1, trajectories.shape[0], trajectories.shape[-1])
+        .transpose(1, 0)
+    )
+
+
+def split_and_pad_trajectories(
+    tensor: torch.Tensor | TensorDict, dones: torch.Tensor
+) -> tuple[torch.Tensor | TensorDict, torch.Tensor]:
+    """Splits trajectories at done indices. Then concatenates them and pads with zeros up to the length of the longest
+    trajectory. Returns masks corresponding to valid parts of the trajectories.
+
+    Example:
+        Input: [[a1, a2, a3, a4 | a5, a6],
+                 [b1, b2 | b3, b4, b5 | b6]]
+
+        Output:[[a1, a2, a3, a4], | [[True, True, True, True],
+                [a5, a6, 0, 0],   |  [True, True, False, False],
+                [b1, b2, 0, 0],   |  [True, True, False, False],
+                [b3, b4, b5, 0],  |  [True, True, True, False],
+                [b6, 0, 0, 0]]    |  [True, False, False, False]]
+
+    Assumes that the input has the following order of dimensions: [time, number of envs, additional dimensions]
+    """
+
+    dones = dones.clone()
+    dones[-1] = 1
+    # Permute the buffers to have order (num_envs, num_transitions_per_env, ...), for correct reshaping
+    flat_dones = dones.transpose(1, 0).reshape(-1, 1)
+    # Get length of trajectory by counting the number of successive not done elements
+    done_indices = torch.cat(
+        (flat_dones.new_tensor([-1], dtype=torch.int64), flat_dones.nonzero()[:, 0])
+    )
+    trajectory_lengths = done_indices[1:] - done_indices[:-1]
+    trajectory_lengths_list = trajectory_lengths.tolist()
+    # Extract the individual trajectories
+    if isinstance(tensor, TensorDict):
+        padded_trajectories = {}
+        for k, v in tensor.items():
+            # split the tensor into trajectories
+            trajectories = torch.split(
+                v.transpose(1, 0).flatten(0, 1), trajectory_lengths_list
+            )
+            # add at least one full length trajectory
+            trajectories = trajectories + (
+                torch.zeros(v.shape[0], *v.shape[2:], device=v.device),
+            )
+            # pad the trajectories to the length of the longest trajectory
+            padded_trajectories[k] = torch.nn.utils.rnn.pad_sequence(trajectories)
+            # remove the added tensor
+            padded_trajectories[k] = padded_trajectories[k][:, :-1]
+        padded_trajectories = TensorDict(
+            padded_trajectories,
+            batch_size=[tensor.batch_size[0], len(trajectory_lengths_list)],
+        )
+    else:
+        # split the tensor into trajectories
+        trajectories = torch.split(
+            tensor.transpose(1, 0).flatten(0, 1), trajectory_lengths_list
+        )
+        # add at least one full length trajectory
+        trajectories = trajectories + (
+            torch.zeros(tensor.shape[0], *tensor.shape[2:], device=tensor.device),
+        )
+        # pad the trajectories to the length of the longest trajectory
+        padded_trajectories = torch.nn.utils.rnn.pad_sequence(trajectories)
+        # remove the added tensor
+        padded_trajectories = padded_trajectories[:, :-1]
+    # create masks for the valid parts of the trajectories
+    trajectory_masks = trajectory_lengths > torch.arange(
+        0, tensor.shape[0], device=tensor.device
+    ).unsqueeze(1)
+    return padded_trajectories, trajectory_masks

@@ -3,6 +3,11 @@ import os
 import time
 from dataclasses import asdict
 
+# ---------------------------
+# Recurrent helper utilities
+# ---------------------------
+from typing import Any
+
 import gymnasium as gym
 import numpy as np
 import torch
@@ -19,6 +24,7 @@ from scripts.utils import (
     make_isaaclab_env,
     print_dict,
     seed_everything,
+    split_and_pad_trajectories,
     update_learning_rate_adaptive,
 )
 
@@ -107,7 +113,7 @@ class ExperimentArgs:
     # Agent config
     obs_type: str = "state"
     """the type of the observations"""
-    algorithm: str = "ppo"
+    algorithm: str = "ppo_recurrent"
     """the algorithm to use"""
 
     checkpoint_interval: int = 1000 // num_steps
@@ -130,6 +136,16 @@ class ExperimentArgs:
     """the target KL divergence threshold"""
     lr_multiplier: float = 1.5
     """Factor to multiply/divide learning rate by"""
+
+    # Recurrent (RNN) support
+    recurrent: bool = True
+    """Enable recurrent rollout storage and sequence training (rsl-rl style)."""
+    rnn_type: str = "gru"
+    """The type of recurrent network to use."""
+    rnn_hidden_size: int = 256
+    """The hidden size of the recurrent network."""
+    rnn_num_layers: int = 1
+    """The number of layers of the recurrent network."""
 
 
 @configclass
@@ -237,9 +253,16 @@ def main(args):
         "only continuous action space is supported"
     )
 
-    agent = AGENT_LOOKUP_BY_ALGORITHM[args.algorithm][args.obs_type](n_obs, n_act).to(
-        device
-    )
+    recurrent_kwargs = {
+        "rnn_type": args.rnn_type,
+        "rnn_hidden_size": args.rnn_hidden_size,
+        "rnn_num_layers": args.rnn_num_layers,
+    }
+    agent = AGENT_LOOKUP_BY_ALGORITHM[args.algorithm][args.obs_type](
+        n_obs,
+        n_act,
+        **(recurrent_kwargs if args.recurrent else {}),
+    ).to(device)
     optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
 
     # ALGO Logic: Storage setup
@@ -251,8 +274,36 @@ def main(args):
     rewards = torch.zeros((args.num_steps, args.num_envs, 1)).to(device)
     dones = torch.zeros((args.num_steps, args.num_envs, 1)).to(device).byte()
     values = torch.zeros((args.num_steps, args.num_envs, 1)).to(device)
+    hidden_states_actor = [
+        torch.zeros(
+            (
+                args.num_steps,
+                args.rnn_num_layers,
+                args.num_envs,
+                args.rnn_hidden_size,
+            )
+        ).to(device)
+        for _ in range(1 if args.rnn_type == "gru" else 2)
+    ]
+    hidden_states_critic = [
+        torch.zeros(
+            (
+                args.num_steps,
+                args.rnn_num_layers,
+                args.num_envs,
+                args.rnn_hidden_size,
+            )
+        ).to(device)
+        for _ in range(1 if args.rnn_type == "gru" else 2)
+    ]
     mus = torch.zeros_like(actions)
     sigmas = torch.zeros_like(actions)
+    masks = torch.zeros((args.num_steps, args.num_envs, 1), dtype=torch.float32).to(
+        device
+    )
+
+    # Recurrent buffers (stored as a list of tensors/tuples for flexibility)
+    rnn_states_hist: list[Any] | None = None
     # TRY NOT TO MODIFY: start the game
     global_step = 0
 
@@ -309,6 +360,19 @@ def main(args):
                 obs[step].copy_(next_obs)
 
                 # ALGO LOGIC: action logic
+                hidden_states = agent.get_hidden_states()
+                if args.rnn_type == "gru" and not (
+                    hidden_states[0] is None or hidden_states[1] is None
+                ):
+                    hidden_states_actor[0][step].copy_(hidden_states[0])
+                    hidden_states_critic[0][step].copy_(hidden_states[1])
+                elif args.rnn_type == "lstm" and not (
+                    hidden_states[0] == (None, None) or hidden_states[1] == (None, None)
+                ):
+                    hidden_states_actor[0][step].copy_(hidden_states[0][0])
+                    hidden_states_actor[1][step].copy_(hidden_states[0][1])
+                    hidden_states_critic[0][step].copy_(hidden_states[1][0])
+                    hidden_states_critic[1][step].copy_(hidden_states[1][1])
                 action, logprob, _, value, mu, sigma = agent.get_action_and_value(
                     next_obs
                 )
@@ -334,7 +398,11 @@ def main(args):
                         * infos["time_outs"].unsqueeze(1).to(device)
                     )
                 dones[step].copy_(next_done.view(-1, 1))
+                masks[step].copy_(1.0 - next_done.view(-1, 1).float())
                 # TRY NOT TO MODIFY END:
+
+                if args.recurrent:
+                    agent.reset(next_done)
 
                 # Capture detailed logging information
                 if "log" in infos:
@@ -410,7 +478,7 @@ def main(args):
             step_speed = (args.num_steps * args.num_envs) / (time.time() - start_time)
 
         start_time = time.time()
-        # flatten the batch
+        # flatten the batch (non-recurrent path only)
         b_obs = obs.flatten(0, 1)
         b_logprobs = logprobs.flatten(0, 1)
         b_actions = actions.flatten(0, 1)
@@ -419,68 +487,181 @@ def main(args):
         b_values = values.flatten(0, 1)
         b_mus = mus.flatten(0, 1)
         b_sigmas = sigmas.flatten(0, 1)
+        b_dones = dones.squeeze(-1)
 
         # Optimizing the policy and value network
-        b_inds = np.arange(args.batch_size)
-        for epoch in range(args.update_epochs):
-            np.random.shuffle(b_inds)
-            for start in range(0, args.batch_size, args.minibatch_size):
-                end = start + args.minibatch_size
-                mb_inds = b_inds[start:end]
+        if not args.recurrent:
+            b_inds = np.arange(args.batch_size)
+            for epoch in range(args.update_epochs):
+                np.random.shuffle(b_inds)
+                for start in range(0, args.batch_size, args.minibatch_size):
+                    end = start + args.minibatch_size
+                    mb_inds = b_inds[start:end]
 
-                _, newlogprob, entropy, newvalue, newmu, newsigma = (
-                    agent.get_action_and_value(b_obs[mb_inds], b_actions[mb_inds])
-                )
-                ratio = torch.exp(newlogprob - torch.squeeze(b_logprobs[mb_inds]))
+                    _, newlogprob, entropy, newvalue, newmu, newsigma = (
+                        agent.get_action_and_value(b_obs[mb_inds], b_actions[mb_inds])
+                    )
+                    ratio = torch.exp(newlogprob - torch.squeeze(b_logprobs[mb_inds]))
 
-                with torch.inference_mode():
-                    kl = torch.sum(
-                        torch.log(newsigma / b_sigmas[mb_inds] + 1.0e-5)
-                        + (
-                            torch.square(b_sigmas[mb_inds])
-                            + torch.square(b_mus[mb_inds] - newmu)
+                    with torch.inference_mode():
+                        kl = torch.sum(
+                            torch.log(newsigma / b_sigmas[mb_inds] + 1.0e-5)
+                            + (
+                                torch.square(b_sigmas[mb_inds])
+                                + torch.square(b_mus[mb_inds] - newmu)
+                            )
+                            / (2 * torch.square(newsigma))
+                            - 0.5,
+                            dim=-1,
                         )
-                        / (2 * torch.square(newsigma))
-                        - 0.5,
-                        dim=-1,
+                        kl_mean = torch.mean(kl)
+
+                    mb_advantages = b_advantages[mb_inds]
+                    if args.norm_adv:
+                        mb_advantages = (mb_advantages - mb_advantages.mean()) / (
+                            mb_advantages.std() + 1e-8
+                        )
+
+                    # Policy loss
+                    pg_loss1 = -torch.squeeze(mb_advantages) * ratio
+                    pg_loss2 = -torch.squeeze(mb_advantages) * torch.clamp(
+                        ratio, 1 - args.clip_coef, 1 + args.clip_coef
                     )
-                    kl_mean = torch.mean(kl)
+                    pg_loss = torch.max(pg_loss1, pg_loss2).mean()
 
-                mb_advantages = b_advantages[mb_inds]
-                if args.norm_adv:
-                    mb_advantages = (mb_advantages - mb_advantages.mean()) / (
-                        mb_advantages.std() + 1e-8
+                    # Value loss
+                    if args.clip_vloss:
+                        v_clipped = b_values[mb_inds] + torch.clamp(
+                            newvalue - b_values[mb_inds],
+                            -args.clip_coef,
+                            args.clip_coef,
+                        )
+                        v_loss_unclipped = (newvalue - b_returns[mb_inds]).pow(2)
+                        v_loss_clipped = (v_clipped - b_returns[mb_inds]).pow(2)
+                        v_loss = torch.max(v_loss_unclipped, v_loss_clipped).mean()
+                    else:
+                        v_loss = (b_returns[mb_inds] - newvalue).pow(2).mean()
+
+                    entropy_loss = entropy.mean()
+                    loss = (
+                        pg_loss - args.ent_coef * entropy_loss + v_loss * args.vf_coef
                     )
 
-                # Policy loss
-                pg_loss1 = -torch.squeeze(mb_advantages) * ratio
-                pg_loss2 = -torch.squeeze(mb_advantages) * torch.clamp(
-                    ratio, 1 - args.clip_coef, 1 + args.clip_coef
-                )
-                pg_loss = torch.max(pg_loss1, pg_loss2).mean()
-
-                # Value loss
-                if args.clip_vloss:
-                    v_clipped = b_values[mb_inds] + torch.clamp(
-                        newvalue - b_values[mb_inds],
-                        -args.clip_coef,
-                        args.clip_coef,
+                    optimizer.zero_grad()
+                    loss.backward()
+                    grad_norm = nn.utils.clip_grad_norm_(
+                        agent.parameters(), args.max_grad_norm
                     )
-                    v_loss_unclipped = (newvalue - b_returns[mb_inds]).pow(2)
-                    v_loss_clipped = (v_clipped - b_returns[mb_inds]).pow(2)
-                    v_loss = torch.max(v_loss_unclipped, v_loss_clipped).mean()
-                else:
-                    v_loss = (b_returns[mb_inds] - newvalue).pow(2).mean()
+                    optimizer.step()
+        else:
+            # Recurrent sequence minibatches: split envs into groups
+            padded_obs_trajectories, trajectory_masks = split_and_pad_trajectories(
+                obs, dones
+            )
+            minibatch_size = args.num_envs // args.num_minibatches
+            for epoch in range(args.update_epochs):
+                first_traj = 0
+                for i in range(args.num_minibatches):
+                    start = i * minibatch_size
+                    end = (i + 1) * minibatch_size
+                    last_was_done = torch.zeros_like(b_dones, dtype=torch.bool)
+                    last_was_done[1:] = b_dones[:-1]
+                    last_was_done[0] = True
+                    trajectories_batch_size = torch.sum(last_was_done[:, start:end])
+                    last_traj = first_traj + trajectories_batch_size
 
-                entropy_loss = entropy.mean()
-                loss = pg_loss - args.ent_coef * entropy_loss + v_loss * args.vf_coef
+                    mb_masks = trajectory_masks[:, first_traj:last_traj]
+                    mb_obs = padded_obs_trajectories[:, first_traj:last_traj]
+                    mb_actions = actions[:, start:end]
+                    mb_mus = mus[:, start:end]
+                    mb_sigmas = sigmas[:, start:end]
+                    mb_returns = returns[:, start:end]
+                    mb_advantages = advantages[:, start:end]
+                    mb_values = values[:, start:end]
+                    mb_logprobs = logprobs[:, start:end]
 
-                optimizer.zero_grad()
-                loss.backward()
-                grad_norm = nn.utils.clip_grad_norm_(
-                    agent.parameters(), args.max_grad_norm
-                )
-                optimizer.step()
+                    # reshape to [num_envs, time, num layers, hidden dim] (original shape: [time, num_layers, num_envs, hidden_dim])
+                    # then take only time steps after dones (flattens num envs and time dimensions),
+                    # take a batch of trajectories and finally reshape back to [num_layers, batch, hidden_dim]
+                    last_was_done = last_was_done.permute(1, 0)
+                    hid_a_batch = [
+                        saved_hidden_states.permute(2, 0, 1, 3)[last_was_done][
+                            first_traj:last_traj
+                        ]
+                        .transpose(1, 0)
+                        .contiguous()
+                        for saved_hidden_states in hidden_states_actor
+                    ]
+                    hid_c_batch = [
+                        saved_hidden_states.permute(2, 0, 1, 3)[last_was_done][
+                            first_traj:last_traj
+                        ]
+                        .transpose(1, 0)
+                        .contiguous()
+                        for saved_hidden_states in hidden_states_critic
+                    ]
+                    # remove the tuple for GRU
+                    hid_a_batch = (
+                        hid_a_batch[0] if len(hid_a_batch) == 1 else hid_a_batch
+                    )
+                    hid_c_batch = (
+                        hid_c_batch[0] if len(hid_c_batch) == 1 else hid_c_batch
+                    )
+                    first_traj = last_traj
+
+                    _, newlogprob, entropy, newvalue, newmu, newsigma = (
+                        agent.get_action_and_value(
+                            mb_obs,
+                            mb_actions,
+                            mb_masks,
+                            hid_a_batch,
+                            hid_c_batch,
+                        )
+                    )
+                    ratio = torch.exp(newlogprob - torch.squeeze(mb_logprobs))
+
+                    with torch.inference_mode():
+                        kl = torch.sum(
+                            torch.log(newsigma / mb_sigmas + 1.0e-5)
+                            + (torch.square(mb_sigmas) + torch.square(mb_mus - newmu))
+                            / (2 * torch.square(newsigma))
+                            - 0.5,
+                            dim=-1,
+                        )
+                        kl_mean = torch.mean(kl)
+
+                    if args.norm_adv:
+                        mb_advantages = (mb_advantages - mb_advantages.mean()) / (
+                            mb_advantages.std() + 1e-8
+                        )
+
+                    pg_loss1 = -torch.squeeze(mb_advantages) * ratio
+                    pg_loss2 = -torch.squeeze(mb_advantages) * torch.clamp(
+                        ratio, 1 - args.clip_coef, 1 + args.clip_coef
+                    )
+                    pg_loss = torch.max(pg_loss1, pg_loss2).mean()
+
+                    if args.clip_vloss:
+                        v_clipped = mb_values + torch.clamp(
+                            newvalue - mb_values, -args.clip_coef, args.clip_coef
+                        )
+                        v_loss_unclipped = (newvalue - mb_returns).pow(2)
+                        v_loss_clipped = (v_clipped - mb_returns).pow(2)
+                        v_loss = torch.max(v_loss_unclipped, v_loss_clipped).mean()
+                    else:
+                        v_loss = (mb_returns - newvalue).pow(2).mean()
+
+                    entropy_loss = entropy.mean()
+                    loss = (
+                        pg_loss - args.ent_coef * entropy_loss + v_loss * args.vf_coef
+                    )
+
+                    optimizer.zero_grad()
+                    loss.backward()
+                    grad_norm = nn.utils.clip_grad_norm_(
+                        agent.parameters(), args.max_grad_norm
+                    )
+                    optimizer.step()
 
             if args.target_kl is not None and args.adaptive_lr:
                 update_learning_rate_adaptive(

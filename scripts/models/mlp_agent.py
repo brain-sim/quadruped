@@ -63,10 +63,6 @@ class MLPPPOAgent(BaseAgent):
         """Compute state-value from input."""
         return self.critic(x)
 
-    def get_action(self, obs):
-        action_mean = self.actor(obs)
-        return action_mean
-
     def get_action_and_value(self, obs, action: torch.Tensor | None = None):
         action_mean = self.actor(obs)
         action_std = self.actor_std.expand_as(action_mean)

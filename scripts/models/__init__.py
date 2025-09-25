@@ -12,12 +12,16 @@ from .mlp_agent import (
     MLPTD3Actor,
     MLPTD3Critic,
 )
+from .mlp_lstm_agent import (
+    MLPPPORecurrentAgent,
+)
 from .utils import layer_init
 
 __all__ = [
     "MLPPPOAgent",
     "MLPTD3Actor",
     "MLPTD3Critic",
+    "MLPPPORecurrentAgent",
     "MLPFastTD3Actor",
     "MLPFastTD3Critic",
     "CNNPPOAgent",
@@ -38,6 +42,7 @@ AGENT_LOOKUP_BY_INPUT_TYPE = {
     },
     "state": {
         "ppo": MLPPPOAgent,
+        "ppo_recurrent": MLPPPORecurrentAgent,
         "td3": [MLPTD3Actor, MLPTD3Critic],
         "fast_td3": [MLPFastTD3Actor, MLPFastTD3Critic],
     },
@@ -46,6 +51,9 @@ AGENT_LOOKUP_BY_ALGORITHM = {
     "ppo": {
         "image": CNNPPOAgent,
         "state": MLPPPOAgent,
+    },
+    "ppo_recurrent": {
+        "state": MLPPPORecurrentAgent,
     },
     "td3": {
         "image": [CNNTD3Actor, CNNTD3Critic],

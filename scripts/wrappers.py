@@ -68,6 +68,22 @@ def convert_dict_to_jax(obj):
         return obj
 
 
+def apply_nan_to_num(data, nan=0.0, posinf=0.0, neginf=0.0):
+    """Apply nan_to_num to tensors or dictionaries of tensors."""
+    if isinstance(data, dict):
+        # Recursively apply to dictionary values
+        result = {}
+        for key, value in data.items():
+            result[key] = apply_nan_to_num(value, nan, posinf, neginf)
+        return result
+    elif isinstance(data, torch.Tensor):
+        # Apply nan_to_num to tensor
+        return data.nan_to_num(nan=nan, posinf=posinf, neginf=neginf)
+    else:
+        # Return as-is for other types
+        return data
+
+
 class IsaacLabVecEnvWrapper(Wrapper):
     """Wraps around Isaac Lab environment for RSL-RL library
 
@@ -220,9 +236,7 @@ class IsaacLabVecEnvWrapper(Wrapper):
             obs_dict = self.unwrapped._get_observations()
         if self.use_jax:
             obs_dict = convert_dict_to_jax(obs_dict)
-        obs_dict["policy"] = obs_dict["policy"].nan_to_num(
-            nan=0.0, posinf=0.0, neginf=0.0
-        )
+        obs_dict["policy"] = apply_nan_to_num(obs_dict["policy"])
         return obs_dict["policy"], {"observations": obs_dict}
 
     @property
@@ -261,9 +275,7 @@ class IsaacLabVecEnvWrapper(Wrapper):
         # return observations
         if self.use_jax:
             obs_dict = convert_dict_to_jax(obs_dict)
-        obs_dict["policy"] = obs_dict["policy"].nan_to_num(
-            nan=0.0, posinf=0.0, neginf=0.0
-        )
+        obs_dict["policy"] = apply_nan_to_num(obs_dict["policy"])
         return obs_dict["policy"], {"observations": obs_dict}
 
     def step(
@@ -294,7 +306,7 @@ class IsaacLabVecEnvWrapper(Wrapper):
             )
             extras = convert_dict_to_jax(extras)
 
-        obs = obs_dict["policy"].nan_to_num(nan=0.0, posinf=0.0, neginf=0.0)
+        obs = apply_nan_to_num(obs_dict["policy"])
         # rew = rew.nan_to_num(nan=0.0, posinf=0.0, neginf=0.0)
         extras["observations"] = obs_dict
         # move time out information to the extras dict
